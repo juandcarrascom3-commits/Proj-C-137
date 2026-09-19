@@ -773,6 +773,7 @@ export function C137GraphView({
     setHoveredId(null);
     setActiveCategory(null);
     updateUrlNote(null);
+    setActiveNoteId(''); // Sync with Zustand
     if (onNoteSelect) onNoteSelect('');
     setRecenterTrigger(prev => prev + 1);
   };
@@ -780,6 +781,7 @@ export function C137GraphView({
   const handleCloseInspector = () => {
     setSelectedId(null);
     updateUrlNote(null);
+    setActiveNoteId(''); // Sync with Zustand
     if (onNoteSelect) onNoteSelect('');
   };
 
@@ -789,12 +791,13 @@ export function C137GraphView({
         setSelectedId(null);
         setSearchTerm('');
         updateUrlNote(null);
+        setActiveNoteId(''); // Sync with Zustand
         if (onNoteSelect) onNoteSelect('');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onNoteSelect]);
+  }, [onNoteSelect, setActiveNoteId]);
 
   const selectedNode = selectedId !== null ? currentGraph.nodes[selectedId] : null;
 
@@ -849,29 +852,46 @@ export function C137GraphView({
     if (!searchTerm.trim()) return new Set<number>();
     const q = searchTerm.toLowerCase();
     const set = new Set<number>();
+    
+    // Crear un mapa rápido de contenido para búsqueda O(1)
+    const contentMap = new Map<string, string>();
+    storeNotes.forEach(note => {
+      if (note.content) contentMap.set(note.id, note.content.toLowerCase());
+    });
+
     currentGraph.nodes.forEach((n, idx) => {
+      const content = n.slug ? contentMap.get(n.slug) : undefined;
       if (
         n.name.toLowerCase().includes(q) ||
         (n.category && n.category.toLowerCase().includes(q)) ||
-        (n.tags && n.tags.some((t) => t.toLowerCase().includes(q)))
+        (n.tags && n.tags.some((t) => t.toLowerCase().includes(q))) ||
+        (content && content.includes(q))
       ) {
         set.add(idx);
       }
     });
     return set;
-  }, [searchTerm, currentGraph.nodes]);
+  }, [searchTerm, currentGraph.nodes, storeNotes]);
 
   const searchResults = useMemo(() => {
     if (!searchTerm.trim()) return [];
     const q = searchTerm.toLowerCase();
+    
+    const contentMap = new Map<string, string>();
+    storeNotes.forEach(note => {
+      if (note.content) contentMap.set(note.id, note.content.toLowerCase());
+    });
+
     return currentGraph.nodes
-      .filter((n) =>
-        n.name.toLowerCase().includes(q) ||
+      .filter((n) => {
+        const content = n.slug ? contentMap.get(n.slug) : undefined;
+        return n.name.toLowerCase().includes(q) ||
         (n.category && n.category.toLowerCase().includes(q)) ||
-        (n.tags && n.tags.some((t) => t.toLowerCase().includes(q)))
-      )
+        (n.tags && n.tags.some((t) => t.toLowerCase().includes(q))) ||
+        (content && content.includes(q));
+      })
       .slice(0, 8);
-  }, [searchTerm, currentGraph]);
+  }, [searchTerm, currentGraph, storeNotes]);
 
   // Atajo global de teclado: Presionar '/' para enfocar el buscador rápido
   useEffect(() => {

@@ -73,12 +73,18 @@ export interface WorkerUnpinPayload {
   id: number;
 }
 
+export interface WorkerRecyclePayload {
+  type: 'RECYCLE_BUFFER';
+  buffer: Float32Array;
+}
+
 export type WorkerInMessage = 
   | WorkerInitPayload 
   | WorkerReheatPayload 
   | WorkerStopPayload 
   | WorkerPinPayload 
-  | WorkerUnpinPayload;
+  | WorkerUnpinPayload
+  | WorkerRecyclePayload;
 
 // Declaración de contexto de Worker para tipado flexible en Web Worker
 const ctx: any = self;
@@ -87,6 +93,8 @@ let simulation: any = null;
 let currentNodes: WorkerNode[] = [];
 let isRunning = false;
 let tickTimer: any = null;
+
+let recycledBuffers: Float32Array[] = [];
 
 function stopCurrentSimulation() {
   isRunning = false;
@@ -105,7 +113,14 @@ function stopCurrentSimulation() {
  */
 function packPositions(): Float32Array {
   const count = currentNodes.length;
-  const buffer = new Float32Array(count * 3);
+  const requiredLength = count * 3;
+  let buffer: Float32Array;
+
+  if (recycledBuffers.length > 0 && recycledBuffers[0].length === requiredLength) {
+    buffer = recycledBuffers.pop()!;
+  } else {
+    buffer = new Float32Array(requiredLength);
+  }
 
   for (let i = 0; i < count; i++) {
     const node = currentNodes[i];
@@ -307,5 +322,14 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
       stopCurrentSimulation();
       break;
     }
+
+    case 'RECYCLE_BUFFER': {
+      // Agregar buffer reciclado para evitar GC
+      if (data.buffer && recycledBuffers.length < 5) {
+        recycledBuffers.push(data.buffer);
+      }
+      break;
+    }
   }
 };
+

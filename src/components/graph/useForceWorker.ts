@@ -21,6 +21,7 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
   const workerRef = useRef<Worker | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const pendingBufferRef = useRef<Float32Array | null>(null);
+  const lastProcessedBufferRef = useRef<Float32Array | null>(null);
 
   const [state, setState] = useState<ForceWorkerState>({
     isSimulating: false,
@@ -53,6 +54,13 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
         if (type === 'WARMUP_DONE') {
           // Aplicación inmediata del warmup para que el primer render sea instantáneo
           callbacksRef.current.onPositionsUpdate(positions);
+          // Return buffer to worker
+          if (workerRef.current && positions.buffer.byteLength > 0) {
+            workerRef.current.postMessage(
+              { type: 'RECYCLE_BUFFER', buffer: positions },
+              [positions.buffer]
+            );
+          }
           setState(prev => ({ ...prev, isSimulating: true, alpha }));
         } else if (type === 'TICK') {
           // Sincronizar actualización con el refresco de pantalla vía RAF
@@ -61,6 +69,15 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
               rafIdRef.current = null;
               if (pendingBufferRef.current) {
                 callbacksRef.current.onPositionsUpdate(pendingBufferRef.current);
+                
+                // Return the PREVIOUS buffer to worker to avoid GC, keeping the current one alive for React's async update
+                if (workerRef.current && lastProcessedBufferRef.current && lastProcessedBufferRef.current.buffer.byteLength > 0) {
+                  workerRef.current.postMessage(
+                    { type: 'RECYCLE_BUFFER', buffer: lastProcessedBufferRef.current },
+                    [lastProcessedBufferRef.current.buffer]
+                  );
+                }
+                lastProcessedBufferRef.current = pendingBufferRef.current;
               }
             });
           }
@@ -71,6 +88,13 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
             rafIdRef.current = null;
           }
           callbacksRef.current.onPositionsUpdate(positions);
+          // Return buffer one last time
+          if (workerRef.current && positions.buffer.byteLength > 0) {
+            workerRef.current.postMessage(
+              { type: 'RECYCLE_BUFFER', buffer: positions },
+              [positions.buffer]
+            );
+          }
           if (callbacksRef.current.onSimulationEnd) {
             callbacksRef.current.onSimulationEnd(positions);
           }
