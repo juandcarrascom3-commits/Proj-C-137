@@ -27,7 +27,15 @@ import {
   Sparkles
 } from 'lucide-react';
 
-import { parseNotesToGraph, Graph3DNode, Graph3DLink, NexusNote } from '../utils/graphParser';
+import { 
+  parseNotesToGraph, 
+  extractWikiLinks, 
+  extractInlineTags, 
+  Graph3DNode, 
+  Graph3DLink, 
+  NexusNote,
+  ParsedGraphResult
+} from '../utils/graphParser';
 import { MOCK_NEXUS_NOTES } from '../data/mockNotes';
 
 /**
@@ -641,7 +649,217 @@ function Scene({
 }
 
 // -----------------------------------------------------------------------
-// 5. COMPONENTE EXPORTABLE <C137GraphView />
+// 5. UTILIDADES DE SINCRONIZACIÓN Y REACTIVIDAD INCREMENTAL (FASE 5)
+// -----------------------------------------------------------------------
+
+/**
+ * Sincronización Deep Linking: Actualiza el parámetro ?note= en la URL
+ * utilizando History API sin provocar recarga de página.
+ */
+function updateUrlNote(slugOrName: string | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    const url = new URL(window.location.href);
+    if (slugOrName && slugOrName.trim().length > 0) {
+      url.searchParams.set('note', slugOrName.trim());
+    } else {
+      url.searchParams.delete('note');
+    }
+    window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+  } catch {
+    // Fallback silencioso en entornos restringidos
+  }
+}
+
+/**
+ * Construye o actualiza el grafo Nexus de forma incremental.
+ * Mantiene intactas las coordenadas tridimensionales (x, y, z) y los vectores de velocidad (vx, vy, vz)
+ * de los nodos preexistentes para eliminar saltos bruscos al recibir nuevas notas en vivo.
+ */
+function buildIncrementalNexusGraph(
+  notes: NexusNote[],
+  prevNodes?: Graph3DNode[]
+): { nodes: Graph3DNode[]; links: Graph3DLink[] } {
+  const nodes: Graph3DNode[] = [];
+  const links: Graph3DLink[] = [];
+
+  // Mapear nodos preexistentes por su slug/identificador único
+  const prevMap = new Map<string, Graph3DNode>();
+  if (prevNodes && prevNodes.length > 0) {
+    prevNodes.forEach((n) => {
+      prevMap.set(n.slug, n);
+    });
+  }
+
+  const titleToNodeIndex = new Map<string, number>();
+  const tagToNodeIndex = new Map<string, number>();
+
+  // 1. Procesar notas principales (type: 'primary')
+  notes.forEach((note, idx) => {
+    const slug = note.id;
+    const prev = prevMap.get(slug);
+
+    let x: number, y: number, z: number;
+    let vx: number | undefined, vy: number | undefined, vz: number | undefined;
+
+    if (prev && Number.isFinite(prev.x)) {
+      // Preservar posición y vector cinético anterior
+      x = prev.x;
+      y = prev.y;
+      z = prev.z;
+      vx = prev.vx;
+      vy = prev.vy;
+      vz = prev.vz;
+    } else {
+      // Posicionamiento armónico inicial para nodos nuevos
+      const angle = (idx / Math.max(notes.length, 1)) * Math.PI * 2;
+      const rad = 7 + (idx % 5) * 2.2;
+      x = Math.cos(angle) * rad + (Math.random() - 0.5) * 2.5;
+      y = Math.sin(angle) * rad + (Math.random() - 0.5) * 2.5;
+      z = (Math.random() - 0.5) * 6;
+    }
+
+    const node: Graph3DNode = {
+      id: idx,
+      slug: note.id,
+      name: note.title,
+      type: 'primary',
+      x,
+      y,
+      z,
+      vx,
+      vy,
+      vz,
+      baseScale: 0.35,
+      cluster: idx % 5,
+      degree: 0,
+      connections: [],
+      content: note.content,
+      tags: [...note.tags],
+      category: note.category || 'General',
+      bandwidth: `${(2.4 + (idx * 0.7) % 6).toFixed(1)} Tbps`,
+      signalStrength: 85 + (idx * 7) % 15
+    };
+
+    nodes.push(node);
+    titleToNodeIndex.set(note.title.trim().toLowerCase(), idx);
+  });
+
+  // 2. Extraer tags únicos (de propiedades y menciones inline)
+  const uniqueTags = new Set<string>();
+  notes.forEach((note) => {
+    note.tags.forEach((t) => uniqueTags.add(t.toLowerCase().replace(/^#/, '')));
+    const inline = extractInlineTags(note.content);
+    inline.forEach((t) => uniqueTags.add(t));
+  });
+
+  // 3. Crear nodos para hubs de tags (type: 'relay')
+  let currentIdx = nodes.length;
+  uniqueTags.forEach((tag) => {
+    const tagSlug = `tag-${tag}`;
+    const prev = prevMap.get(tagSlug);
+
+    let x: number, y: number, z: number;
+    let vx: number | undefined, vy: number | undefined, vz: number | undefined;
+
+    if (prev && Number.isFinite(prev.x)) {
+      x = prev.x;
+      y = prev.y;
+      z = prev.z;
+      vx = prev.vx;
+      vy = prev.vy;
+      vz = prev.vz;
+    } else {
+      x = (Math.random() - 0.5) * 22;
+      y = (Math.random() - 0.5) * 22;
+      z = (Math.random() - 0.5) * 22;
+    }
+
+    const tagNode: Graph3DNode = {
+      id: currentIdx,
+      slug: tagSlug,
+      name: `#${tag.toUpperCase()}`,
+      type: 'relay',
+      x,
+      y,
+      z,
+      vx,
+      vy,
+      vz,
+      baseScale: 0.45,
+      cluster: (currentIdx % 4) + 1,
+      degree: 0,
+      connections: [],
+      category: 'Tag Hub',
+      bandwidth: '10.0 Tbps (Hub)',
+      signalStrength: 98
+    };
+
+    nodes.push(tagNode);
+    tagToNodeIndex.set(tag, currentIdx);
+    currentIdx++;
+  });
+
+  // 4. Enlaces WikiLinks y Tags
+  const existingLinks = new Set<string>();
+  function addLink(sourceIdx: number, targetIdx: number, type: 'wikilink' | 'tag', weight = 1.0) {
+    if (sourceIdx === targetIdx) return;
+    const linkKey = sourceIdx < targetIdx ? `${sourceIdx}-${targetIdx}` : `${targetIdx}-${sourceIdx}`;
+    if (existingLinks.has(linkKey)) return;
+    existingLinks.add(linkKey);
+
+    links.push({
+      source: sourceIdx,
+      target: targetIdx,
+      distance: type === 'tag' ? 6.5 : 8.5,
+      weight,
+      type
+    });
+
+    nodes[sourceIdx].connections.push(targetIdx);
+    nodes[targetIdx].connections.push(sourceIdx);
+    nodes[sourceIdx].degree++;
+    nodes[targetIdx].degree++;
+  }
+
+  notes.forEach((note, noteIdx) => {
+    // A. Conexiones WikiLink
+    const wikiLinks = extractWikiLinks(note.content);
+    wikiLinks.forEach((targetTitle) => {
+      const targetIdx = titleToNodeIndex.get(targetTitle.trim().toLowerCase());
+      if (targetIdx !== undefined) {
+        addLink(noteIdx, targetIdx, 'wikilink', 1.2);
+      }
+    });
+
+    // B. Conexiones a Tags
+    const noteAllTags = new Set([
+      ...note.tags.map((t) => t.toLowerCase().replace(/^#/, '')),
+      ...extractInlineTags(note.content)
+    ]);
+
+    noteAllTags.forEach((tag) => {
+      const tagIdx = tagToNodeIndex.get(tag);
+      if (tagIdx !== undefined) {
+        addLink(noteIdx, tagIdx, 'tag', 0.8);
+      }
+    });
+  });
+
+  // 5. Escala proporcional según grado de conectividad
+  nodes.forEach((node) => {
+    if (node.type === 'relay') {
+      node.baseScale = Math.min(0.7, 0.35 + node.degree * 0.04);
+    } else {
+      node.baseScale = Math.min(0.55, 0.26 + node.degree * 0.035);
+    }
+  });
+
+  return { nodes, links };
+}
+
+// -----------------------------------------------------------------------
+// 6. COMPONENTE EXPORTABLE <C137GraphView />
 // -----------------------------------------------------------------------
 export function C137GraphView({
   notes,
@@ -662,32 +880,180 @@ export function C137GraphView({
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   const controlsRef = useRef<any>(null);
+  const simulationRef = useRef<any>(null);
+  const blurTimeoutRef = useRef<any>(null);
+  const initialDeepLinkCheckedRef = useRef(false);
 
   // Sincronizar tema con prop externa
   useEffect(() => {
     if (theme) setCurrentTheme(theme);
   }, [theme]);
 
-  // Cache de grafos
+  // Fuente de notas y estado reactivo incremental del grafo
   const sourceNotes = useMemo(() => notes || MOCK_NEXUS_NOTES, [notes]);
-  const nexusGraph = useMemo(() => parseNotesToGraph(sourceNotes), [sourceNotes]);
+  const [nexusGraph, setNexusGraph] = useState<ParsedGraphResult>(() => parseNotesToGraph(sourceNotes));
   const constellationGraph = useMemo(() => buildConstellationBenchmark(), []);
 
+  // Grafo activo según el modo seleccionado
   const currentGraph = dataMode === 'nexus' ? nexusGraph : constellationGraph;
 
-  // Sincronización bidireccional de activeNoteId externo
+  // -----------------------------------------------------------------------
+  // FASE 5: REACTIVIDAD DINÁMICA (HOT-RELOAD) DE LA SIMULACIÓN
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    const prevNodes = nexusGraph.nodes;
+    const { nodes: newNodes, links: newLinks } = buildIncrementalNexusGraph(sourceNotes, prevNodes);
+
+    if (!simulationRef.current) {
+      // Inicialización de la simulación 3D
+      const sim = forceSimulation(newNodes, 3)
+        .force('charge', forceManyBody().strength((d: any) => (d.type === 'relay' ? -120 : -75)).distanceMax(50))
+        .force('link', forceLink(newLinks).id((d: any) => d.id).distance((l: any) => l.distance).strength(0.5))
+        .force('center', forceCenter(0, 0, 0))
+        .stop();
+
+      // Relajación sincrónica previa para convergencia inicial estable
+      for (let i = 0; i < 180; ++i) {
+        sim.tick();
+      }
+
+      newNodes.forEach((node, i) => {
+        if (!Number.isFinite(node.x)) node.x = Math.sin(i * 1.7) * 15;
+        if (!Number.isFinite(node.y)) node.y = Math.cos(i * 2.3) * 15;
+        if (!Number.isFinite(node.z)) node.z = Math.sin(i * 3.1) * 15;
+      });
+
+      simulationRef.current = sim;
+      setNexusGraph({ nodes: newNodes, links: newLinks });
+    } else {
+      // Hot-reload reactivo: integrar nuevos nodos sin salto visual
+      const sim = simulationRef.current;
+      sim.nodes(newNodes);
+
+      const linkForce = sim.force('link');
+      if (linkForce) {
+        linkForce.links(newLinks);
+      }
+
+      // Recalentar la simulación d3-force-3d suavemente
+      sim.alpha(0.3).restart();
+
+      sim.on('tick', () => {
+        newNodes.forEach((node) => {
+          if (!Number.isFinite(node.x)) node.x = 0;
+          if (!Number.isFinite(node.y)) node.y = 0;
+          if (!Number.isFinite(node.z)) node.z = 0;
+        });
+
+        // Actualizar el estado para que WebGL dibuje la transición orgánica
+        setNexusGraph({ nodes: [...newNodes], links: [...newLinks] });
+
+        // Auto-estabilización: detener simulación al converger para ahorrar CPU
+        if (sim.alpha() < 0.02) {
+          sim.stop();
+          sim.on('tick', null);
+        }
+      });
+    }
+  }, [sourceNotes]);
+
+  // -----------------------------------------------------------------------
+  // FASE 5: AUDITORÍA DE DESMONTAJE (PREVENCIÓN DE MEMORY LEAKS)
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    return () => {
+      if (simulationRef.current) {
+        simulationRef.current.on('tick', null);
+        simulationRef.current.stop();
+        simulationRef.current = null;
+      }
+      if (blurTimeoutRef.current) {
+        clearTimeout(blurTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // -----------------------------------------------------------------------
+  // FASE 5: DEEP LINKING (INICIALIZACIÓN DESDE ?note= EN URL)
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    if (initialDeepLinkCheckedRef.current) return;
+    if (currentGraph.nodes.length === 0) return;
+    initialDeepLinkCheckedRef.current = true;
+
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const noteParam = params.get('note');
+      const targetId = noteParam || activeNoteId;
+
+      if (targetId) {
+        const foundIdx = currentGraph.nodes.findIndex(
+          (n) => n.slug === targetId ||
+                 n.name.toLowerCase() === targetId.toLowerCase() ||
+                 String(n.id) === targetId
+        );
+        if (foundIdx !== -1) {
+          setSelectedId(foundIdx);
+          const foundNode = currentGraph.nodes[foundIdx];
+          updateUrlNote(foundNode.slug || foundNode.name);
+          if (onNoteSelect) {
+            onNoteSelect(foundNode.slug || foundNode.name);
+          }
+        }
+      }
+    } catch {
+      // Fallback seguro
+    }
+  }, [currentGraph.nodes, activeNoteId, onNoteSelect]);
+
+  // Sincronización bidireccional si la prop externa activeNoteId muta
   useEffect(() => {
     if (!activeNoteId) return;
 
     if (dataMode === 'nexus') {
       const foundIdx = currentGraph.nodes.findIndex(
-        n => n.slug === activeNoteId || n.name.toLowerCase() === activeNoteId.toLowerCase()
+        (n) => n.slug === activeNoteId || n.name.toLowerCase() === activeNoteId.toLowerCase()
       );
       if (foundIdx !== -1) {
         setSelectedId(foundIdx);
+        updateUrlNote(activeNoteId);
       }
     }
-  }, [activeNoteId, currentGraph, dataMode]);
+  }, [activeNoteId, currentGraph.nodes, dataMode]);
+
+  // Historial del navegador: soportar botones Atrás / Adelante con popstate
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handlePopState = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const noteParam = params.get('note');
+        if (noteParam) {
+          const foundIdx = currentGraph.nodes.findIndex(
+            (n) => n.slug === noteParam ||
+                   n.name.toLowerCase() === noteParam.toLowerCase() ||
+                   String(n.id) === noteParam
+          );
+          if (foundIdx !== -1) {
+            setSelectedId(foundIdx);
+            const node = currentGraph.nodes[foundIdx];
+            if (onNoteSelect) onNoteSelect(node.slug || node.name);
+          }
+        } else {
+          setSelectedId(null);
+        }
+      } catch {
+        // Fallback seguro
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [currentGraph.nodes, onNoteSelect]);
 
   const activeFocusId = hoveredId !== null ? hoveredId : selectedId;
   const activeNeighbors = useMemo(() => {
@@ -696,21 +1062,29 @@ export function C137GraphView({
     return new Set<number>(node ? node.connections : []);
   }, [activeFocusId, currentGraph]);
 
-  // Callback de selección con invocación externa
+  // Callback de selección con actualización de Deep Link e invocación externa
   const handleSelectNode = useCallback((id: number) => {
     setSelectedId(id);
     const node = currentGraph.nodes[id];
-    if (node && onNoteSelect) {
-      onNoteSelect(node.slug || node.name);
+    if (node) {
+      updateUrlNote(node.slug || node.name);
+      if (onNoteSelect) {
+        onNoteSelect(node.slug || node.name);
+      }
     }
-  }, [currentGraph, onNoteSelect]);
+  }, [currentGraph.nodes, onNoteSelect]);
 
   const handleModeChange = (newMode: 'nexus' | 'constellation') => {
+    if (newMode === 'constellation' && simulationRef.current) {
+      simulationRef.current.on('tick', null);
+      simulationRef.current.stop();
+    }
     setDataMode(newMode);
     setSelectedId(null);
     setHoveredId(null);
     setActiveCategory(null);
     setSearchTerm('');
+    updateUrlNote(null);
     if (controlsRef.current) {
       controlsRef.current.target.set(0, 0, 0);
       controlsRef.current.object.position.set(0, 8, 38);
@@ -733,6 +1107,7 @@ export function C137GraphView({
     setSelectedId(null);
     setHoveredId(null);
     setActiveCategory(null);
+    updateUrlNote(null);
     if (onNoteSelect) {
       onNoteSelect('');
     }
@@ -745,17 +1120,19 @@ export function C137GraphView({
 
   const handleCloseInspector = () => {
     setSelectedId(null);
+    updateUrlNote(null);
     if (onNoteSelect) {
       onNoteSelect('');
     }
   };
 
-  // Atajo de teclado Esc para limpiar selección
+  // Atajo de teclado Esc para limpiar selección y URL
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setSelectedId(null);
         setSearchTerm('');
+        updateUrlNote(null);
         if (onNoteSelect) {
           onNoteSelect('');
         }
@@ -816,7 +1193,7 @@ export function C137GraphView({
     } else {
       setActiveCategory(catName);
       const firstInCat = currentGraph.nodes.find(
-        n => (n.category === catName) || (!n.category && (catName === 'Notas' || catName === 'Hubs'))
+        (n) => (n.category === catName) || (!n.category && (catName === 'Notas' || catName === 'Hubs'))
       );
       if (firstInCat) {
         handleSelectNode(firstInCat.id);
@@ -829,16 +1206,16 @@ export function C137GraphView({
     if (!searchTerm.trim()) return [];
     const q = searchTerm.toLowerCase();
     return currentGraph.nodes
-      .filter(n => 
-        n.name.toLowerCase().includes(q) || 
-        (n.category && n.category.toLowerCase().includes(q)) || 
-        (n.tags && n.tags.some(t => t.toLowerCase().includes(q)))
+      .filter((n) =>
+        n.name.toLowerCase().includes(q) ||
+        (n.category && n.category.toLowerCase().includes(q)) ||
+        (n.tags && n.tags.some((t) => t.toLowerCase().includes(q)))
       )
       .slice(0, 8);
   }, [searchTerm, currentGraph]);
 
-  const totalPrimary = useMemo(() => currentGraph.nodes.filter(n => n.type === 'primary').length, [currentGraph]);
-  const totalRelay = useMemo(() => currentGraph.nodes.filter(n => n.type === 'relay').length, [currentGraph]);
+  const totalPrimary = useMemo(() => currentGraph.nodes.filter((n) => n.type === 'primary').length, [currentGraph]);
+  const totalRelay = useMemo(() => currentGraph.nodes.filter((n) => n.type === 'relay').length, [currentGraph]);
   const density = (currentGraph.links.length / (currentGraph.nodes.length || 1)).toFixed(2);
   const themeCfg = THEME_CONFIG[currentTheme];
 
@@ -941,7 +1318,8 @@ export function C137GraphView({
             onChange={(e) => setSearchTerm(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => {
-              setTimeout(() => setIsSearchFocused(false), 200);
+              if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+              blurTimeoutRef.current = setTimeout(() => setIsSearchFocused(false), 200);
             }}
             placeholder="Buscar notas..."
             className="w-44 sm:w-56 pl-9 pr-8 py-1.5 text-xs font-sans text-slate-200 placeholder:text-slate-500
