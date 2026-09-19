@@ -1,4 +1,22 @@
-import { Graph3DNode, Graph3DLink, NexusNote, ParsedGraphResult } from '../../utils/graphParser';
+// -----------------------------------------------------------------------
+// FUENTE CANÓNICA DE TIPOS Y CONFIGURACIÓN PARA EL GRAFO 3D
+// Todos los componentes en src/components/graph/ deben importar desde aquí.
+// -----------------------------------------------------------------------
+
+import {
+  Graph3DNode,
+  Graph3DLink,
+  NexusNote,
+  ParsedGraphResult,
+} from '../../utils/graphParser';
+
+// Re-export para que los consumidores del módulo graph/ no accedan
+// directamente a graphParser.
+export type { Graph3DNode, Graph3DLink, NexusNote, ParsedGraphResult };
+
+// -----------------------------------------------------------------------
+// TEMA
+// -----------------------------------------------------------------------
 
 export type GraphTheme = 'cyberpunk' | 'emerald' | 'amber';
 
@@ -7,7 +25,9 @@ export interface ThemeConfig {
   primaryHex: string;
   relayHex: string;
   targetHex: string;
+  /** Clases Tailwind para nodos primarios */
   primaryClass: string;
+  /** Clases Tailwind para nodos relay */
   relayClass: string;
   borderClass: string;
   textAccentClass: string;
@@ -26,7 +46,7 @@ export const THEME_CONFIG: Record<GraphTheme, ThemeConfig> = {
     borderClass: 'border-cyan-500/30',
     textAccentClass: 'text-cyan-400',
     glowColor: 'rgba(0, 240, 255, 0.25)',
-    starsFactor: 3.5
+    starsFactor: 3.5,
   },
   emerald: {
     bg: '#021814',
@@ -38,7 +58,7 @@ export const THEME_CONFIG: Record<GraphTheme, ThemeConfig> = {
     borderClass: 'border-emerald-500/30',
     textAccentClass: 'text-emerald-400',
     glowColor: 'rgba(16, 185, 129, 0.25)',
-    starsFactor: 3.0
+    starsFactor: 3.0,
   },
   amber: {
     bg: '#120b02',
@@ -50,8 +70,19 @@ export const THEME_CONFIG: Record<GraphTheme, ThemeConfig> = {
     borderClass: 'border-amber-500/30',
     textAccentClass: 'text-amber-400',
     glowColor: 'rgba(245, 158, 11, 0.25)',
-    starsFactor: 3.2
-  }
+    starsFactor: 3.2,
+  },
 };
 
-export type { Graph3DNode, Graph3DLink, NexusNote, ParsedGraphResult };
+// -----------------------------------------------------------------------
+// PROPS COMPARTIDAS (opcional: interfaces genéricas reutilizables)
+// -----------------------------------------------------------------------
+
+export interface BaseGraphProps {
+  nodes: Graph3DNode[];
+  links: Graph3DLink[];
+  hoveredId: number | null;
+  selectedId: number | null;
+  theme: GraphTheme;
+  activeCategory: string | null;
+}

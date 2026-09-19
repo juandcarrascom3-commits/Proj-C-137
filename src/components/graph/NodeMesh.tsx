@@ -2,8 +2,7 @@ import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { Text, Billboard } from '@react-three/drei';
-import { Graph3DNode } from '../../utils/graphParser';
-import { GraphTheme, THEME_CONFIG } from './types';
+import { Graph3DNode, GraphTheme, THEME_CONFIG } from './types';
 
 export interface NodeMeshProps {
   nodes: Graph3DNode[];

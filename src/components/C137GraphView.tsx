@@ -31,14 +31,18 @@ import {
 import { 
   parseNotesToGraph, 
   extractWikiLinks, 
-  extractInlineTags, 
+  extractInlineTags,
+} from '../utils/graphParser';
+
+
+import { 
+  GraphTheme, 
+  THEME_CONFIG, 
   Graph3DNode, 
   Graph3DLink, 
-  NexusNote,
-  ParsedGraphResult
-} from '../utils/graphParser';
-import { MOCK_NEXUS_NOTES } from '../data/mockNotes';
-
+  NexusNote, 
+  ParsedGraphResult 
+} from './graph/types';
 import { NodeMesh } from './graph/NodeMesh';
 import { EdgeLines } from './graph/EdgeLines';
 import { CameraController } from './graph/CameraController';
@@ -46,7 +50,9 @@ import { InspectorPanel } from './graph/InspectorPanel';
 import { useForceWorker } from './graph/useForceWorker';
 import { useNexusStore, NodeSpatialCoord } from '../store/useNexusStore';
 
-export type GraphTheme = 'cyberpunk' | 'emerald' | 'amber';
+// GraphTheme y THEME_CONFIG están definidos en ./graph/types.ts y se importan arriba.
+// Se re-exporta GraphTheme para que los consumidores externos del componente puedan usarlo.
+export type { GraphTheme };
 
 export interface C137GraphViewProps {
   notes?: NexusNote[];
@@ -55,40 +61,6 @@ export interface C137GraphViewProps {
   standalone?: boolean;
   theme?: GraphTheme;
 }
-
-export const THEME_CONFIG: Record<GraphTheme, {
-  bg: string;
-  primaryHex: string;
-  relayHex: string;
-  targetHex: string;
-  glowColor: string;
-  starsFactor: number;
-}> = {
-  cyberpunk: {
-    bg: '#020617',
-    primaryHex: '#00f0ff',
-    relayHex: '#7000ff',
-    targetHex: '#ffffff',
-    glowColor: 'rgba(0, 240, 255, 0.25)',
-    starsFactor: 3.5
-  },
-  emerald: {
-    bg: '#021814',
-    primaryHex: '#10b981',
-    relayHex: '#06b6d4',
-    targetHex: '#ffffff',
-    glowColor: 'rgba(16, 185, 129, 0.25)',
-    starsFactor: 3.0
-  },
-  amber: {
-    bg: '#120b02',
-    primaryHex: '#f59e0b',
-    relayHex: '#f43f5e',
-    targetHex: '#ffffff',
-    glowColor: 'rgba(245, 158, 11, 0.25)',
-    starsFactor: 3.2
-  }
-};
 
 function buildConstellationBenchmark() {
   const TOTAL = 150;
@@ -543,13 +515,13 @@ export function C137GraphView({
   const isFirstSimulationRef = useRef(true);
 
   // Integración con el store de Zustand para preservación topológica
-  const { savedPositions, saveNodePositions, setActiveNoteId } = useNexusStore();
+  const { savedPositions, saveNodePositions, setActiveNoteId, notes: storeNotes, injectTestNodes } = useNexusStore();
 
   useEffect(() => {
     if (theme) setCurrentTheme(theme);
   }, [theme]);
 
-  const sourceNotes = useMemo(() => notes || MOCK_NEXUS_NOTES, [notes]);
+  const sourceNotes = useMemo(() => notes || storeNotes, [notes, storeNotes]);
   const [nexusGraph, setNexusGraph] = useState<ParsedGraphResult>(() => parseNotesToGraph(sourceNotes));
   const constellationGraph = useMemo(() => buildConstellationBenchmark(), []);
 
@@ -1172,6 +1144,17 @@ export function C137GraphView({
           >
             <Database className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">{dataMode === 'nexus' ? 'Nexus' : '150N'}</span>
+          </button>
+
+          <div className="w-px h-4 bg-white/10 mx-1" />
+          
+          <button
+            onClick={() => injectTestNodes(100)}
+            title="Inyectar Nodos +100"
+            className="px-2.5 py-1 rounded-full text-[11px] font-mono text-slate-400 hover:text-emerald-300 hover:bg-white/5 transition-all flex items-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Inyectar +100</span>
           </button>
         </div>
       </div>

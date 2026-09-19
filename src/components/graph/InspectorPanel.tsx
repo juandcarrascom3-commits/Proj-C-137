@@ -1,7 +1,7 @@
 import React from 'react';
 import { FileText, Tag, Link2, ArrowRight, Crosshair, X, ExternalLink, CheckCircle2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { Graph3DNode } from '../../utils/graphParser';
+import { Graph3DNode } from './types';
 import { useNexusStore } from '../../store/useNexusStore';
 
 export interface InspectorPanelProps {

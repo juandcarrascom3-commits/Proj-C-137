@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
-import { Graph3DNode, Graph3DLink } from '../../utils/graphParser';
+import { Graph3DNode, Graph3DLink } from './types';
 
 export interface CameraControllerProps {
   nodes: Graph3DNode[];

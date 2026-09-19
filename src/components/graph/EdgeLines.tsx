@@ -1,8 +1,7 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { Graph3DNode, Graph3DLink } from '../../utils/graphParser';
-import { GraphTheme, THEME_CONFIG } from './types';
+import { Graph3DNode, Graph3DLink, GraphTheme, THEME_CONFIG } from './types';
 
 export interface EdgeLinesProps {
   nodes: Graph3DNode[];
