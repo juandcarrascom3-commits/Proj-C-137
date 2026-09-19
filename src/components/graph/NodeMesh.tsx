@@ -1,7 +1,7 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
-import { Text, Billboard } from '@react-three/drei';
+import { Html } from '@react-three/drei';
 import { Graph3DNode, GraphTheme, THEME_CONFIG } from './types';
 
 export interface NodeMeshProps {
@@ -36,6 +36,7 @@ interface FloatingNodeLabelProps {
   theme: GraphTheme;
 }
 
+
 function FloatingNodeLabel({
   node,
   isHovered,
@@ -49,12 +50,10 @@ function FloatingNodeLabel({
 
   useFrame(({ camera }) => {
     if (!groupRef.current) return;
-    // Si está hovered, selected o es coincidencia de búsqueda: siempre visible
     if (isHovered || isSelected || isSearchMatch) {
       groupRef.current.visible = true;
       return;
     }
-    // Para hubs estructurales: visible solo cuando el zoom de la cámara es cercano (LOD)
     if (isHub) {
       const dist = camera.position.distanceTo(
         new THREE.Vector3(node.x, node.y, node.z)
@@ -65,38 +64,43 @@ function FloatingNodeLabel({
     }
   });
 
-  const posY = (Number.isFinite(node.y) ? node.y : 0) + (node.baseScale || 0.35) + 0.38;
+  const posY = (Number.isFinite(node.y) ? node.y : 0) + (node.baseScale || 0.35) + 0.15;
   const posX = Number.isFinite(node.x) ? node.x : 0;
   const posZ = Number.isFinite(node.z) ? node.z : 0;
 
-  const labelColor = isHovered
-    ? '#00f0ff'
+  const labelColorClass = isHovered
+    ? 'text-cyan-300'
     : isSelected
-    ? '#c084fc'
+    ? 'text-purple-400'
     : isSearchMatch
-    ? '#00f0ff'
-    : isHub
-    ? themeCfg.relayHex
-    : '#e2e8f0';
+    ? 'text-cyan-400'
+    : 'text-slate-200';
 
-  const fontSize = (isHovered || isSelected || isSearchMatch) ? 0.28 : 0.22;
+  const borderColorClass = isHovered
+    ? 'border-cyan-400/50 shadow-[0_0_12px_rgba(0,240,255,0.4)]'
+    : isSelected
+    ? 'border-purple-500/50 shadow-[0_0_12px_rgba(192,132,252,0.4)]'
+    : isSearchMatch
+    ? 'border-cyan-400/40 shadow-[0_0_10px_rgba(0,240,255,0.3)]'
+    : 'border-white/10';
+
+  const scale = (isHovered || isSelected || isSearchMatch) ? 1.0 : 0.85;
 
   return (
     <group ref={groupRef} position={[posX, posY, posZ]}>
-      <Billboard follow lockX={false} lockY={false} lockZ={false}>
-        <Text
-          fontSize={fontSize}
-          color={labelColor}
-          anchorX="center"
-          anchorY="bottom"
-          outlineWidth={0.032}
-          outlineColor="#030712"
-          material-depthTest={false}
-          renderOrder={100}
-        >
-          {node.name}
-        </Text>
-      </Billboard>
+      <Html
+        center
+        zIndexRange={[100, 0]}
+        distanceFactor={15} // Escala el HTML con la distancia
+        style={{
+          transition: 'all 0.2s',
+          opacity: groupRef.current?.visible ? 1 : 0,
+          transform: `scale(${scale})`
+        }}
+        className={`pointer-events-none px-2 py-1 rounded-md bg-gray-950/60 backdrop-blur-md border ${borderColorClass} ${labelColorClass} font-mono text-[10px] whitespace-nowrap`}
+      >
+        {node.name}
+      </Html>
     </group>
   );
 }

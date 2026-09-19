@@ -1168,14 +1168,16 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
           
-          <button
-            onClick={() => injectTestNodes(100)}
-            title="Inyectar Nodos +100"
-            className="px-2.5 py-1 rounded-full text-[11px] font-mono text-slate-400 hover:text-emerald-300 hover:bg-white/5 transition-all flex items-center gap-1.5"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Inyectar +100</span>
-          </button>
+          {import.meta.env.DEV && (
+            <button
+              onClick={() => injectTestNodes(100)}
+              title="Inyectar Nodos +100 (Dev Only)"
+              className="px-2.5 py-1 rounded-full text-[11px] font-mono text-slate-400 hover:text-emerald-300 hover:bg-white/5 transition-all flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Inyectar +100</span>
+            </button>
+          )}
         </div>
       </div>
 
