@@ -12,7 +12,7 @@ export interface NodeMeshProps {
   onSelect: (id: number) => void;
   bloomBoost: boolean;
   theme: GraphTheme;
-  activeCategory: string | null;
+  activeCategory?: string | null;
 }
 
 export function NodeMesh({
@@ -24,7 +24,7 @@ export function NodeMesh({
   onSelect,
   bloomBoost,
   theme,
-  activeCategory
+  activeCategory = null
 }: NodeMeshProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const themeCfg = THEME_CONFIG[theme];

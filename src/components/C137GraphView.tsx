@@ -24,7 +24,8 @@ import {
   Link2,
   ArrowRight,
   Database,
-  Filter
+  Filter,
+  Cpu
 } from 'lucide-react';
 
 import { 
@@ -42,6 +43,8 @@ import { NodeMesh } from './graph/NodeMesh';
 import { EdgeLines } from './graph/EdgeLines';
 import { CameraController } from './graph/CameraController';
 import { InspectorPanel } from './graph/InspectorPanel';
+import { useForceWorker } from './graph/useForceWorker';
+import { useNexusStore, NodeSpatialCoord } from '../store/useNexusStore';
 
 export type GraphTheme = 'cyberpunk' | 'emerald' | 'amber';
 
@@ -53,7 +56,7 @@ export interface C137GraphViewProps {
   theme?: GraphTheme;
 }
 
-const THEME_CONFIG: Record<GraphTheme, {
+export const THEME_CONFIG: Record<GraphTheme, {
   bg: string;
   primaryHex: string;
   relayHex: string;
@@ -177,6 +180,24 @@ function buildConstellationBenchmark() {
 // -----------------------------------------------------------------------
 // 1. NODOS INSTANCIADOS CON RENDERIZADO FLUIDO Y COMPATIBILIDAD
 // Components extracted
+
+interface SceneProps {
+  nodes: Graph3DNode[];
+  links: Graph3DLink[];
+  dataModeKey: string;
+  autoRotate: boolean;
+  bloomBoost: boolean;
+  hoveredId: number | null;
+  selectedId: number | null;
+  activeNeighbors: Set<number>;
+  onHover: (id: number | null) => void;
+  onSelect: (id: number) => void;
+  controlsRef: React.RefObject<any>;
+  theme: GraphTheme;
+  showLabels?: boolean;
+  inspectorOpen?: boolean;
+  activeCategory?: string | null;
+}
 
 function Scene({
   nodes,
@@ -334,14 +355,30 @@ function updateUrlNote(slugOrName: string | null) {
 
 function buildIncrementalNexusGraph(
   notes: NexusNote[],
-  prevNodes?: Graph3DNode[]
+  prevNodes?: Graph3DNode[],
+  savedPositions?: Record<string, NodeSpatialCoord>
 ): { nodes: Graph3DNode[]; links: Graph3DLink[] } {
   const nodes: Graph3DNode[] = [];
   const links: Graph3DLink[] = [];
 
-  const prevMap = new Map<string, Graph3DNode>();
+  const prevMap = new Map<string, { x: number; y: number; z: number; vx?: number; vy?: number; vz?: number }>();
+
+  // 1. Cargar coordenadas guardadas en el store de Zustand
+  if (savedPositions) {
+    Object.entries(savedPositions).forEach(([slug, pos]) => {
+      if (Number.isFinite(pos.x) && Number.isFinite(pos.y) && Number.isFinite(pos.z)) {
+        prevMap.set(slug, pos);
+      }
+    });
+  }
+
+  // 2. Sobrescribir con coordenadas del grafo actual si existen y son válidas
   if (prevNodes && prevNodes.length > 0) {
-    prevNodes.forEach((n) => prevMap.set(n.slug, n));
+    prevNodes.forEach((n) => {
+      if (Number.isFinite(n.x) && Number.isFinite(n.y) && Number.isFinite(n.z)) {
+        prevMap.set(n.slug, { x: n.x, y: n.y, z: n.z, vx: n.vx, vy: n.vy, vz: n.vz });
+      }
+    });
   }
 
   const titleToNodeIndex = new Map<string, number>();
@@ -355,9 +392,15 @@ function buildIncrementalNexusGraph(
     let vx: number | undefined, vy: number | undefined, vz: number | undefined;
 
     if (prev && Number.isFinite(prev.x)) {
-      x = prev.x; y = prev.y; z = prev.z;
-      vx = prev.vx; vy = prev.vy; vz = prev.vz;
+      // PRESERVACIÓN TOPOLÓGICA: Mantener estrictamente las coordenadas calculadas
+      x = prev.x;
+      y = prev.y;
+      z = prev.z;
+      vx = prev.vx;
+      vy = prev.vy;
+      vz = prev.vz;
     } else {
+      // Si es un nodo nuevo, lo posicionamos suavemente cerca del centro o de su clúster
       const angle = (idx / Math.max(notes.length, 1)) * Math.PI * 2;
       const rad = 7 + (idx % 5) * 2.2;
       x = Math.cos(angle) * rad + (Math.random() - 0.5) * 2.5;
@@ -506,9 +549,12 @@ export function C137GraphView({
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   const controlsRef = useRef<any>(null);
-  const simulationRef = useRef<any>(null);
   const blurTimeoutRef = useRef<any>(null);
   const initialDeepLinkCheckedRef = useRef(false);
+  const isFirstSimulationRef = useRef(true);
+
+  // Integración con el store de Zustand para preservación topológica
+  const { savedPositions, saveNodePositions, setActiveNoteId } = useNexusStore();
 
   useEffect(() => {
     if (theme) setCurrentTheme(theme);
@@ -520,65 +566,93 @@ export function C137GraphView({
 
   const currentGraph = dataMode === 'nexus' ? nexusGraph : constellationGraph;
 
-  useEffect(() => {
-    const prevNodes = nexusGraph.nodes;
-    const { nodes: newNodes, links: newLinks } = buildIncrementalNexusGraph(sourceNotes, prevNodes);
+  // 1. Web Worker de Físicas: Receptor de posiciones por tick (Float32Array a 60 FPS)
+  const handleWorkerPositionsUpdate = useCallback((positions: Float32Array) => {
+    setNexusGraph((prev) => {
+      const updatedNodes = [...prev.nodes];
+      const count = Math.min(updatedNodes.length, Math.floor(positions.length / 3));
+      let hasChanges = false;
 
-    if (!simulationRef.current) {
-      const sim = forceSimulation(newNodes, 3)
-        .force('charge', forceManyBody().strength((d: any) => (d.type === 'relay' ? -120 : -75)).distanceMax(50))
-        .force('link', forceLink(newLinks).id((d: any) => d.id).distance((l: any) => l.distance).strength(0.5))
-        .force('center', forceCenter(0, 0, 0))
-        .stop();
+      for (let i = 0; i < count; i++) {
+        const offset = i * 3;
+        const nx = positions[offset + 0];
+        const ny = positions[offset + 1];
+        const nz = positions[offset + 2];
 
-      for (let i = 0; i < 180; ++i) {
-        sim.tick();
+        if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(nz)) {
+          updatedNodes[i] = {
+            ...updatedNodes[i],
+            x: nx,
+            y: ny,
+            z: nz
+          };
+          hasChanges = true;
+        }
       }
 
-      newNodes.forEach((node, i) => {
-        if (!Number.isFinite(node.x)) node.x = Math.sin(i * 1.7) * 15;
-        if (!Number.isFinite(node.y)) node.y = Math.cos(i * 2.3) * 15;
-        if (!Number.isFinite(node.z)) node.z = Math.sin(i * 3.1) * 15;
-      });
+      return hasChanges ? { ...prev, nodes: updatedNodes } : prev;
+    });
+  }, []);
 
-      simulationRef.current = sim;
-      setNexusGraph({ nodes: newNodes, links: newLinks });
-    } else {
-      const sim = simulationRef.current;
-      sim.nodes(newNodes);
-
-      const linkForce = sim.force('link');
-      if (linkForce) linkForce.links(newLinks);
-
-      sim.alpha(0.3).restart();
-
-      sim.on('tick', () => {
-        newNodes.forEach((node) => {
-          if (!Number.isFinite(node.x)) node.x = 0;
-          if (!Number.isFinite(node.y)) node.y = 0;
-          if (!Number.isFinite(node.z)) node.z = 0;
-        });
-
-        setNexusGraph({ nodes: [...newNodes], links: [...newLinks] });
-
-        if (sim.alpha() < 0.02) {
-          sim.stop();
-          sim.on('tick', null);
+  // 2. Web Worker de Físicas: Al estabilizarse la simulación, persistir en Zustand
+  const handleWorkerSimulationEnd = useCallback((positions: Float32Array) => {
+    const posMap: Record<string, { x: number; y: number; z: number }> = {};
+    setNexusGraph((prev) => {
+      const count = Math.min(prev.nodes.length, Math.floor(positions.length / 3));
+      for (let i = 0; i < count; i++) {
+        const offset = i * 3;
+        const node = prev.nodes[i];
+        if (node && node.slug) {
+          posMap[node.slug] = {
+            x: positions[offset + 0],
+            y: positions[offset + 1],
+            z: positions[offset + 2]
+          };
         }
-      });
-    }
-  }, [sourceNotes]);
+      }
+      return prev;
+    });
+    saveNodePositions(posMap);
+  }, [saveNodePositions]);
+
+  // Hook del Web Worker para cómputo desacoplado de d3-force-3d
+  const {
+    dispatchSimulation,
+    reheat,
+    stop: stopWorkerSimulation,
+    isSimulating,
+    alpha: workerAlpha
+  } = useForceWorker({
+    onPositionsUpdate: handleWorkerPositionsUpdate,
+    onSimulationEnd: handleWorkerSimulationEnd
+  });
+
+  // 3. Orquestador de Topología: Preserva coordenadas previas y delega al Worker
+  useEffect(() => {
+    if (dataMode !== 'nexus') return;
+
+    const prevNodes = nexusGraph.nodes;
+    const { nodes: newNodes, links: newLinks } = buildIncrementalNexusGraph(
+      sourceNotes,
+      prevNodes,
+      savedPositions
+    );
+
+    setNexusGraph({ nodes: newNodes, links: newLinks });
+
+    const isUpdate = !isFirstSimulationRef.current;
+    isFirstSimulationRef.current = false;
+
+    // Despacho asíncrono al Web Worker fuera del hilo principal
+    dispatchSimulation(newNodes, newLinks, isUpdate);
+  }, [sourceNotes, dataMode, dispatchSimulation]);
 
   useEffect(() => {
     return () => {
-      if (simulationRef.current) {
-        simulationRef.current.on('tick', null);
-        simulationRef.current.stop();
-        simulationRef.current = null;
-      }
+      stopWorkerSimulation();
       if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
     };
-  }, []);
+  }, [stopWorkerSimulation]);
 
   useEffect(() => {
     if (initialDeepLinkCheckedRef.current) return;
@@ -666,13 +740,16 @@ export function C137GraphView({
     if (node) {
       updateUrlNote(node.slug || node.name);
       if (onNoteSelect) onNoteSelect(node.slug || node.name);
+      // Sincronización bi-direccional con el store global Zustand
+      if (node.type === 'primary' && node.slug) {
+        setActiveNoteId(node.slug);
+      }
     }
-  }, [currentGraph.nodes, onNoteSelect]);
+  }, [currentGraph.nodes, onNoteSelect, setActiveNoteId]);
 
   const handleModeChange = (newMode: 'nexus' | 'constellation') => {
-    if (newMode === 'constellation' && simulationRef.current) {
-      simulationRef.current.on('tick', null);
-      simulationRef.current.stop();
+    if (newMode === 'constellation') {
+      stopWorkerSimulation();
     }
     setDataMode(newMode);
     setSelectedId(null);
@@ -977,6 +1054,23 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
+          {/* Botón de re-estabilización física con Web Worker */}
+          <button
+            onClick={() => reheat(0.35)}
+            title="Re-ejecutar física en Web Worker (60 FPS)"
+            className={`px-2.5 py-1 rounded-full text-[11px] font-mono transition-all flex items-center gap-1.5 ${
+              isSimulating
+                ? 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/30'
+                : 'text-slate-400 hover:text-cyan-300 hover:bg-white/5'
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">{isSimulating ? 'Worker 60 FPS' : 'Worker Físicas'}</span>
+            <span className={`w-1.5 h-1.5 rounded-full ${isSimulating ? 'bg-cyan-400 animate-ping' : 'bg-emerald-400'}`} />
+          </button>
+
+          <div className="w-px h-4 bg-white/10 mx-1" />
+
           <button
             onClick={() => handleModeChange(dataMode === 'nexus' ? 'constellation' : 'nexus')}
             title={dataMode === 'nexus' ? "Cambiar a Benchmark 150 Nodos" : "Cambiar a BBDD Nexus"}
@@ -988,142 +1082,20 @@ export function C137GraphView({
         </div>
       </div>
 
-      {/* 4. PANEL INSPECTOR DE NOTAS (RESPONSIVE: BOTTOM SHEET EN MÓVIL, LATERAL EN ESCRITORIO) */}
-      <div 
-        id="c137-node-inspector"
-        className={`fixed z-30 flex flex-col backdrop-blur-md bg-gray-950/80 shadow-2xl transition-transform duration-300 ease-out pointer-events-auto
-                   bottom-0 left-0 right-0 w-full max-h-[60vh] rounded-t-2xl border-t border-white/10
-                   md:right-4 md:top-16 md:bottom-auto md:left-auto md:w-[380px] md:h-[calc(100vh-80px)] md:max-h-none md:rounded-2xl md:border md:border-white/10
-                   ${selectedNode 
-                     ? 'translate-y-0 md:translate-x-0' 
-                     : 'translate-y-full md:translate-y-0 md:translate-x-full pointer-events-none'}`}
-      >
-        {displayNode && (
-          <div className="flex flex-col h-full p-5 overflow-hidden">
-            <div className="flex items-start justify-between pb-3 border-b border-white/10 shrink-0">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className={`p-1.5 rounded-lg border shrink-0 ${
-                  displayNode.type === 'primary' 
-                    ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400' 
-                    : 'border-violet-500/40 bg-violet-500/10 text-violet-400'
-                }`}>
-                  {displayNode.type === 'primary' ? <FileText className="w-4 h-4" /> : <Tag className="w-4 h-4" />}
-                </div>
-                <div className="min-w-0">
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 block">
-                    {displayNode.category || (displayNode.type === 'primary' ? 'Nota' : 'Hub')} #{displayNode.id}
-                  </span>
-                  <h2 className="text-sm font-semibold text-white tracking-tight truncate">
-                    {displayNode.name}
-                  </h2>
-                </div>
-              </div>
-
-              <button
-                onClick={handleCloseInspector}
-                className="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0 ml-2"
-                title="Cerrar (Esc)"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 my-3 shrink-0 flex-wrap">
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-mono bg-white/5 border border-white/10 text-slate-300 flex items-center gap-1">
-                <Link2 className="w-3 h-3 text-cyan-400" />
-                {displayNode.connections.length} Vínculos
-              </span>
-
-              {displayNode.tags && displayNode.tags.map((t, idx) => (
-                <span key={idx} className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-white/5 border border-white/10 text-slate-400">
-                  #{t.replace(/^#/, '')}
-                </span>
-              ))}
-            </div>
-
-            <div className="flex-1 overflow-y-auto pr-1 space-y-4">
-              {displayNode.content ? (
-                <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 text-xs text-slate-300 leading-relaxed font-sans">
-                  <ReactMarkdown
-                    components={{
-                      h1: ({ children }) => <h1 className="text-sm font-semibold text-white mt-1 mb-2">{children}</h1>,
-                      h2: ({ children }) => <h2 className="text-xs font-semibold text-slate-100 mt-2 mb-1">{children}</h2>,
-                      h3: ({ children }) => <h3 className="text-xs font-medium text-slate-200 mt-1 mb-1">{children}</h3>,
-                      p: ({ children }) => <p className="text-xs text-slate-300 mb-2 leading-relaxed">{children}</p>,
-                      ul: ({ children }) => <ul className="list-disc pl-4 space-y-1 mb-2 text-slate-300">{children}</ul>,
-                      li: ({ children }) => <li className="text-xs">{children}</li>,
-                      code: ({ children }) => <code className="bg-black/50 px-1.5 py-0.5 rounded text-[11px] font-mono text-cyan-300 border border-white/10">{children}</code>,
-                      pre: ({ children }) => <pre className="bg-black/60 p-2.5 rounded-lg border border-white/10 text-[11px] font-mono overflow-x-auto my-2 text-cyan-200">{children}</pre>,
-                    }}
-                  >
-                    {displayNode.content}
-                  </ReactMarkdown>
-                </div>
-              ) : (
-                <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 text-xs font-mono space-y-2 text-slate-400">
-                  <div className="flex justify-between">
-                    <span>Posición 3D:</span>
-                    <span className="text-white">X:{displayNode.x.toFixed(1)} Y:{displayNode.y.toFixed(1)} Z:{displayNode.z.toFixed(1)}</span>
-                  </div>
-                  {displayNode.bandwidth && (
-                    <div className="flex justify-between">
-                      <span>Ancho de Banda:</span>
-                      <span className="text-white">{displayNode.bandwidth}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div>
-                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-2">
-                  <span>Conexiones ({displayNode.connections.length})</span>
-                  <span className="text-[10px] text-slate-500">Haz clic para enfocar</span>
-                </div>
-                <div className="space-y-1">
-                  {displayNode.connections.map(neighborId => {
-                    const neighbor = currentGraph.nodes[neighborId];
-                    if (!neighbor) return null;
-                    return (
-                      <button
-                        key={neighborId}
-                        onClick={() => handleSelectNode(neighborId)}
-                        onMouseEnter={() => setHoveredId(neighborId)}
-                        onMouseLeave={() => setHoveredId(null)}
-                        className="w-full flex items-center justify-between p-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.06] border border-white/5 hover:border-white/10 transition-all text-left text-xs group"
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <span 
-                            className="w-1.5 h-1.5 rounded-full shrink-0" 
-                            style={{ backgroundColor: neighbor.type === 'primary' ? themeCfg.primaryHex : themeCfg.relayHex }} 
-                          />
-                          <span className="truncate text-slate-300 group-hover:text-white transition-colors">
-                            {neighbor.name}
-                          </span>
-                        </div>
-                        <ArrowRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-3 mt-auto border-t border-white/10 shrink-0">
-              <button
-                onClick={() => {
-                  if (controlsRef.current) {
-                    controlsRef.current.target.set(displayNode.x, displayNode.y, displayNode.z);
-                  }
-                }}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-sans text-slate-200 hover:text-white transition-all"
-              >
-                <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Centrar Vista en este Nodo</span>
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      {/* 4. PANEL INSPECTOR DE NOTAS MODULAR BI-DIRECCIONAL */}
+      <InspectorPanel
+        selectedNode={selectedNode}
+        displayNode={displayNode}
+        nodes={currentGraph.nodes}
+        themeCfg={themeCfg}
+        handleCloseInspector={handleCloseInspector}
+        handleSelectNode={handleSelectNode}
+        setHoveredId={setHoveredId}
+        controlsRef={controlsRef}
+        onOpenNote={(slug) => {
+          if (onNoteSelect) onNoteSelect(slug);
+        }}
+      />
     </div>
   );
 }

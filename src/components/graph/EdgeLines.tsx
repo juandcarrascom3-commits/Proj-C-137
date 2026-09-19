@@ -9,10 +9,10 @@ export interface EdgeLinesProps {
   hoveredId: number | null;
   selectedId: number | null;
   theme: GraphTheme;
-  activeCategory: string | null;
+  activeCategory?: string | null;
 }
 
-export function EdgeLines({ nodes, links, hoveredId, selectedId, theme, activeCategory }: EdgeLinesProps) {
+export function EdgeLines({ nodes, links, hoveredId, selectedId, theme, activeCategory = null }: EdgeLinesProps) {
   const geomRef = useRef<THREE.BufferGeometry>(null);
   const matRef = useRef<THREE.LineBasicMaterial>(null);
   const themeCfg = THEME_CONFIG[theme];

@@ -18,7 +18,9 @@ import {
   Layers,
   CheckCircle2,
   Copy,
-  Check
+  Check,
+  Edit2,
+  Trash2
 } from 'lucide-react';
 
 /**
@@ -44,6 +46,8 @@ export default function App() {
     searchQuery,
     setSearchQuery,
     addNote,
+    updateNote,
+    deleteNote,
     getActiveNote
   } = useNexusStore();
 
@@ -277,17 +281,49 @@ export const NexusGraphTab = () => {
               )}
             </div>
 
-            {/* Panel de Nota Activa Detalle */}
+            {/* Panel de Nota Activa Detalle con controles bi-direccionales */}
             {activeNote && (
-              <div className="p-3.5 border-t border-slate-800 bg-slate-950/80 shrink-0">
-                <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
+              <div className="p-3.5 border-t border-slate-800 bg-slate-950/80 shrink-0 space-y-2">
+                <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
                   <span>NOTA ACTIVA EN STORE</span>
                   <span className="text-cyan-400 font-bold">{activeNote.id}</span>
                 </div>
                 <h3 className="text-xs font-bold text-white line-clamp-1">{activeNote.title}</h3>
-                <div className="flex items-center gap-2 mt-2 text-[10px] font-mono text-slate-500">
-                  <span>Cámara 3D sincronizada</span>
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                
+                <div className="flex items-center gap-1.5 pt-1">
+                  <button
+                    onClick={() => {
+                      const newTitle = prompt('Editar título de la nota:', activeNote.title);
+                      if (newTitle && newTitle.trim()) {
+                        updateNote(activeNote.id, { title: newTitle.trim() });
+                      }
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300 hover:text-white transition-colors"
+                    title="Editar título (preserva topología 3D)"
+                  >
+                    <Edit2 className="w-3 h-3 text-cyan-400" />
+                    <span>Editar</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      if (confirm(`¿Eliminar "${activeNote.title}" del grafo neural?`)) {
+                        deleteNote(activeNote.id);
+                      }
+                    }}
+                    className="flex items-center justify-center gap-1 py-1 px-2 rounded bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 text-[10px] font-mono text-red-400 hover:text-red-300 transition-colors"
+                    title="Eliminar nota (preserva coordenadas de las restantes)"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-[9px] font-mono text-slate-500 pt-0.5">
+                  <span>Cámara 3D activa</span>
+                  <div className="flex items-center gap-1 text-emerald-400">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    <span>Preservación OK</span>
+                  </div>
                 </div>
               </div>
             )}
