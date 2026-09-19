@@ -206,6 +206,7 @@ interface InstancedNodesProps {
   onSelect: (id: number) => void;
   bloomBoost: boolean;
   theme: GraphTheme;
+  activeCategory: string | null;
 }
 
 function InstancedNodes({
@@ -216,7 +217,8 @@ function InstancedNodes({
   onHover,
   onSelect,
   bloomBoost,
-  theme
+  theme,
+  activeCategory
 }: InstancedNodesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const themeCfg = THEME_CONFIG[theme];
@@ -246,8 +248,8 @@ function InstancedNodes({
     const mesh = meshRef.current;
     const dummy = new THREE.Object3D();
 
-    const hasFocus = hoveredId !== null || selectedId !== null;
-    const activeNodeId = hoveredId !== null ? hoveredId : selectedId;
+    const hoveredNode = hoveredId !== null ? nodes[hoveredId] : null;
+    const selectedNode = selectedId !== null ? nodes[selectedId] : null;
 
     nodes.forEach((node, i) => {
       const nx = Number.isFinite(node.x) ? node.x : 0;
@@ -255,38 +257,61 @@ function InstancedNodes({
       const nz = Number.isFinite(node.z) ? node.z : 0;
       dummy.position.set(nx, ny, nz);
 
-      const isTarget = i === activeNodeId;
-      const isNeighbor = activeNeighbors.has(i);
+      const isHoveredTarget = i === hoveredId;
+      const isHoveredNeighbor = hoveredId !== null && hoveredNode?.connections.includes(i);
+      
+      const isSelectedTarget = i === selectedId;
+      const isSelectedNeighbor = selectedId !== null && selectedNode?.connections.includes(i);
 
       let scaleMult = 1.0;
-      if (hasFocus) {
-        if (isTarget) scaleMult = 1.65;
-        else if (isNeighbor) scaleMult = 1.3;
-        else scaleMult = 0.5;
+      let chosenColor: THREE.Color;
+
+      if (hoveredId !== null) {
+        if (isHoveredTarget) {
+          scaleMult = 1.5;
+          // Resplandor sutil (halo cian)
+          chosenColor = new THREE.Color('#00ffff').multiplyScalar(2.0);
+        } else if (isHoveredNeighbor) {
+          scaleMult = 1.2;
+          chosenColor = new THREE.Color('#00ffff').multiplyScalar(1.2);
+        } else {
+          scaleMult = 0.5;
+          chosenColor = node.type === 'primary' ? colors.primaryDimmed : colors.relayDimmed;
+        }
+      } else if (selectedId !== null) {
+        if (isSelectedTarget) {
+          scaleMult = 1.65;
+          chosenColor = colors.targetGold;
+        } else if (isSelectedNeighbor) {
+          scaleMult = 1.3;
+          chosenColor = node.type === 'primary' ? colors.primaryBright : colors.relayBright;
+        } else {
+          scaleMult = 0.5;
+          chosenColor = node.type === 'primary' ? colors.primaryDimmed : colors.relayDimmed;
+        }
+      } else {
+        chosenColor = node.type === 'primary' ? colors.primaryNormal : colors.relayNormal;
       }
-      
+
+      // Aislamiento por categoría
+      if (activeCategory) {
+        const nodeCat = node.category || (node.type === 'primary' ? 'Notas' : 'Hubs');
+        if (nodeCat !== activeCategory) {
+          scaleMult *= 0.3;
+          chosenColor = chosenColor.clone().multiplyScalar(0.15);
+        }
+      }
+
       const finalScale = node.baseScale * scaleMult;
       dummy.scale.set(finalScale, finalScale, finalScale);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
-
-      let chosenColor: THREE.Color;
-      if (!hasFocus) {
-        chosenColor = node.type === 'primary' ? colors.primaryNormal : colors.relayNormal;
-      } else if (isTarget) {
-        chosenColor = colors.targetGold;
-      } else if (isNeighbor) {
-        chosenColor = node.type === 'primary' ? colors.primaryBright : colors.relayBright;
-      } else {
-        chosenColor = node.type === 'primary' ? colors.primaryDimmed : colors.relayDimmed;
-      }
-
       mesh.setColorAt(i, chosenColor);
     });
 
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }, [nodes, hoveredId, selectedId, activeNeighbors, colors]);
+  }, [nodes, hoveredId, selectedId, activeNeighbors, colors, activeCategory]);
 
   // Limpieza de recursos WebGL al desmontar
   useEffect(() => {
@@ -341,15 +366,13 @@ interface ConstellationLinesProps {
   hoveredId: number | null;
   selectedId: number | null;
   theme: GraphTheme;
+  activeCategory: string | null;
 }
 
-function ConstellationLines({ nodes, links, hoveredId, selectedId, theme }: ConstellationLinesProps) {
+function ConstellationLines({ nodes, links, hoveredId, selectedId, theme, activeCategory }: ConstellationLinesProps) {
   const geomRef = useRef<THREE.BufferGeometry>(null);
   const matRef = useRef<THREE.LineBasicMaterial>(null);
   const themeCfg = THEME_CONFIG[theme];
-
-  const activeFocusId = hoveredId !== null ? hoveredId : selectedId;
-  const hasFocus = activeFocusId !== null;
 
   const { positions, baseColors } = useMemo(() => {
     const pos = new Float32Array(links.length * 6);
@@ -407,39 +430,74 @@ function ConstellationLines({ nodes, links, hoveredId, selectedId, theme }: Cons
 
     const arr = colorAttr.array as Float32Array;
 
+    const hoveredNode = hoveredId !== null ? nodes[hoveredId] : null;
+    const selectedNode = selectedId !== null ? nodes[selectedId] : null;
+
     links.forEach((link, idx) => {
       const srcId = typeof link.source === 'object' ? (link.source as any).id : link.source;
       const tgtId = typeof link.target === 'object' ? (link.target as any).id : link.target;
+      const srcNode = nodes[srcId];
+      const tgtNode = nodes[tgtId];
       const offset = idx * 6;
 
-      const isConnectedToFocus = hasFocus && (srcId === activeFocusId || tgtId === activeFocusId);
+      const isHoveredConnection = hoveredId !== null && (srcId === hoveredId || tgtId === hoveredId);
+      const isSelectedConnection = selectedId !== null && (srcId === selectedId || tgtId === selectedId);
 
-      if (!hasFocus) {
-        arr[offset + 0] = baseColors[offset + 0];
-        arr[offset + 1] = baseColors[offset + 1];
-        arr[offset + 2] = baseColors[offset + 2];
-        arr[offset + 3] = baseColors[offset + 3];
-        arr[offset + 4] = baseColors[offset + 4];
-        arr[offset + 5] = baseColors[offset + 5];
-      } else if (isConnectedToFocus) {
-        arr[offset + 0] = 1.0;
-        arr[offset + 1] = 0.95;
-        arr[offset + 2] = 0.4;
-        arr[offset + 3] = 0.0;
-        arr[offset + 4] = 1.0;
-        arr[offset + 5] = 1.0;
+      // Aislamiento por categoría: si NINGUNO de los extremos pertenece a la categoría activa, atenuamos
+      let isFilteredOut = false;
+      if (activeCategory) {
+        const srcCat = srcNode?.category || (srcNode?.type === 'primary' ? 'Notas' : 'Hubs');
+        const tgtCat = tgtNode?.category || (tgtNode?.type === 'primary' ? 'Notas' : 'Hubs');
+        if (srcCat !== activeCategory && tgtCat !== activeCategory) {
+          isFilteredOut = true;
+        }
+      }
+
+      if (isFilteredOut) {
+        arr[offset + 0] = baseColors[offset + 0] * 0.15;
+        arr[offset + 1] = baseColors[offset + 1] * 0.15;
+        arr[offset + 2] = baseColors[offset + 2] * 0.15;
+        arr[offset + 3] = baseColors[offset + 3] * 0.15;
+        arr[offset + 4] = baseColors[offset + 4] * 0.15;
+        arr[offset + 5] = baseColors[offset + 5] * 0.15;
       } else {
-        arr[offset + 0] = baseColors[offset + 0] * 0.07;
-        arr[offset + 1] = baseColors[offset + 1] * 0.07;
-        arr[offset + 2] = baseColors[offset + 2] * 0.07;
-        arr[offset + 3] = baseColors[offset + 3] * 0.07;
-        arr[offset + 4] = baseColors[offset + 4] * 0.07;
-        arr[offset + 5] = baseColors[offset + 5] * 0.07;
+        if (hoveredId !== null) {
+          if (isHoveredConnection) {
+            arr[offset + 0] = 0.0; arr[offset + 1] = 1.0; arr[offset + 2] = 1.0;
+            arr[offset + 3] = 0.0; arr[offset + 4] = 1.0; arr[offset + 5] = 1.0;
+          } else {
+            arr[offset + 0] = baseColors[offset + 0] * 0.07;
+            arr[offset + 1] = baseColors[offset + 1] * 0.07;
+            arr[offset + 2] = baseColors[offset + 2] * 0.07;
+            arr[offset + 3] = baseColors[offset + 3] * 0.07;
+            arr[offset + 4] = baseColors[offset + 4] * 0.07;
+            arr[offset + 5] = baseColors[offset + 5] * 0.07;
+          }
+        } else if (selectedId !== null) {
+          if (isSelectedConnection) {
+            arr[offset + 0] = 1.0; arr[offset + 1] = 0.95; arr[offset + 2] = 0.4;
+            arr[offset + 3] = 0.0; arr[offset + 4] = 1.0; arr[offset + 5] = 1.0;
+          } else {
+            arr[offset + 0] = baseColors[offset + 0] * 0.07;
+            arr[offset + 1] = baseColors[offset + 1] * 0.07;
+            arr[offset + 2] = baseColors[offset + 2] * 0.07;
+            arr[offset + 3] = baseColors[offset + 3] * 0.07;
+            arr[offset + 4] = baseColors[offset + 4] * 0.07;
+            arr[offset + 5] = baseColors[offset + 5] * 0.07;
+          }
+        } else {
+          arr[offset + 0] = baseColors[offset + 0];
+          arr[offset + 1] = baseColors[offset + 1];
+          arr[offset + 2] = baseColors[offset + 2];
+          arr[offset + 3] = baseColors[offset + 3];
+          arr[offset + 4] = baseColors[offset + 4];
+          arr[offset + 5] = baseColors[offset + 5];
+        }
       }
     });
 
     colorAttr.needsUpdate = true;
-  }, [hasFocus, activeFocusId, baseColors, links]);
+  }, [hoveredId, selectedId, baseColors, links, nodes, activeCategory]);
 
   // Recalcular el radio de la esfera delimitadora tras asignar posiciones válidas
   useEffect(() => {
@@ -470,7 +528,7 @@ function ConstellationLines({ nodes, links, hoveredId, selectedId, theme }: Cons
         ref={matRef}
         vertexColors
         transparent
-        opacity={hasFocus ? 0.8 : 0.45}
+        opacity={0.45}
         blending={THREE.AdditiveBlending}
         toneMapped={false}
       />
@@ -601,6 +659,7 @@ interface SceneProps {
   theme: GraphTheme;
   showLabels?: boolean;
   inspectorOpen: boolean;
+  activeCategory: string | null;
 }
 
 function Scene({
@@ -617,13 +676,39 @@ function Scene({
   controlsRef,
   theme,
   showLabels = true,
-  inspectorOpen
+  inspectorOpen,
+  activeCategory
 }: SceneProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const starsRef = useRef<THREE.Group>(null);
   const dofRef   = useRef<any>(null);          // ref al efecto DepthOfField
   const themeCfg = THEME_CONFIG[theme];
 
-  useFrame((_, delta) => {
+  // Atenuación del fondo estelar al 20%
+  useEffect(() => {
+    if (starsRef.current) {
+      starsRef.current.traverse((child: any) => {
+        if (child.isPoints && child.material) {
+          child.material.transparent = true;
+          child.material.opacity = 0.2;
+        }
+      });
+    }
+  }, []);
+
+  useFrame(({ camera, raycaster }, delta) => {
+    // 1. Raycasting Adaptativo
+    if (controlsRef.current) {
+      const dist = camera.position.distanceTo(controlsRef.current.target);
+      // Umbral más amplio de lejos, más estrecho de cerca
+      const adaptiveThreshold = Math.max(0.1, dist * 0.025);
+      
+      if (raycaster.params.Points) raycaster.params.Points.threshold = adaptiveThreshold;
+      if (raycaster.params.Line) raycaster.params.Line.threshold = adaptiveThreshold;
+      (raycaster.params as any).Mesh = { threshold: adaptiveThreshold }; // Fallback para meshes
+    }
+
+    // Auto-rotación
     if (groupRef.current && autoRotate) {
       const speed = selectedId !== null ? 0.008 : 0.035;
       groupRef.current.rotation.y += delta * speed;
@@ -635,15 +720,17 @@ function Scene({
       <color attach="background" args={[themeCfg.bg]} />
       <ambientLight intensity={0.25} />
 
-      <Stars 
-        radius={80} 
-        depth={60} 
-        count={1500} 
-        factor={themeCfg.starsFactor} 
-        saturation={0.5} 
-        fade 
-        speed={0.7} 
-      />
+      <group ref={starsRef}>
+        <Stars 
+          radius={80} 
+          depth={60} 
+          count={1500} 
+          factor={themeCfg.starsFactor * 0.2} 
+          saturation={0.5} 
+          fade 
+          speed={0.7} 
+        />
+      </group>
 
       <group ref={groupRef} key={`${dataModeKey}-${theme}`}>
         <InstancedNodes
@@ -655,6 +742,7 @@ function Scene({
           onSelect={onSelect}
           bloomBoost={bloomBoost}
           theme={theme}
+          activeCategory={activeCategory}
         />
         <ConstellationLines
           nodes={nodes}
@@ -662,6 +750,7 @@ function Scene({
           hoveredId={hoveredId}
           selectedId={selectedId}
           theme={theme}
+          activeCategory={activeCategory}
         />
       </group>
 
@@ -690,14 +779,22 @@ function Scene({
         if (activeId === null) return null;
         const node = nodes[activeId];
         if (!node) return null;
+        
+        const isHover = activeId === hoveredId;
+        
         return (
           <Html
             position={[node.x, node.y + (node.baseScale || 0.3) + 0.6, node.z]}
             center
             distanceFactor={35}
             pointerEvents="none"
+            zIndexRange={[100, 0]}
           >
-            <div className="px-2 py-0.5 rounded-md bg-gray-950/80 backdrop-blur-md border border-white/20 text-[11px] font-sans text-slate-100 shadow-xl whitespace-nowrap select-none">
+            <div className={`px-2 py-0.5 rounded-md bg-gray-950/80 backdrop-blur-md border ${
+              isHover 
+                ? 'border-cyan-400 shadow-[0_0_8px_rgba(0,240,255,0.6)] text-cyan-300' 
+                : 'border-white/20 text-slate-100'
+            } text-[11px] font-sans shadow-xl whitespace-nowrap select-none transition-all`}>
               {node.name}
             </div>
           </Html>
@@ -1267,12 +1364,6 @@ export function C137GraphView({
       setActiveCategory(null);
     } else {
       setActiveCategory(catName);
-      const firstInCat = currentGraph.nodes.find(
-        (n) => (n.category === catName) || (!n.category && (catName === 'Notas' || catName === 'Hubs'))
-      );
-      if (firstInCat) {
-        handleSelectNode(firstInCat.id);
-      }
     }
   };
 
@@ -1307,6 +1398,7 @@ export function C137GraphView({
         }}
       >
         <Canvas
+          dpr={[1, Math.min(typeof window !== 'undefined' ? window.devicePixelRatio : 1, 1.5)]}
           camera={{ position: [0, 8, 38], fov: 45 }}
           gl={{
             antialias: false,
@@ -1511,13 +1603,15 @@ export function C137GraphView({
         </div>
       </div>
 
-      {/* 4. PANEL LATERAL RETRÁCTIL (INSPECTOR OBSIDIAN / GRAPHIFY) */}
+      {/* 4. PANEL LATERAL RETRÁCTIL / BOTTOM SHEET (INSPECTOR) */}
       <div 
         id="c137-node-inspector"
-        className={`fixed sm:absolute top-0 right-0 bottom-0 z-30 w-full sm:w-88 md:w-96
-                   backdrop-blur-md bg-gray-950/75 border-l border-white/10
-                   shadow-2xl flex flex-col transform transition-transform duration-300 ease-out
-                   ${selectedNode ? 'translate-x-0 pointer-events-auto' : 'translate-x-full pointer-events-none'}`}
+        className={`fixed z-30 flex flex-col backdrop-blur-md bg-gray-950/75 shadow-2xl transition-transform duration-300 ease-out pointer-events-auto
+                   bottom-0 left-0 right-0 w-full max-h-[55vh] rounded-t-2xl border-t border-white/10
+                   md:right-4 md:top-16 md:bottom-auto md:left-auto md:w-[380px] md:h-[calc(100vh-80px)] md:rounded-2xl md:border md:border-white/10
+                   ${selectedNode 
+                     ? 'translate-y-0 md:translate-x-0' 
+                     : 'translate-y-full md:translate-y-0 md:translate-x-full pointer-events-none'}`}
       >
         {displayNode && (
           <div className="flex flex-col h-full p-5 overflow-hidden">
