@@ -483,41 +483,105 @@ function ConstellationLines({ nodes, links, hoveredId, selectedId, theme }: Cons
 // -----------------------------------------------------------------------
 interface CameraRigProps {
   nodes: Graph3DNode[];
+  links: Graph3DLink[];
   selectedId: number | null;
   controlsRef: React.RefObject<any>;
+  inspectorOpen: boolean;
+  dofRef: React.RefObject<any>;
 }
 
-function CameraRig({ nodes, selectedId, controlsRef }: CameraRigProps) {
+function CameraRig({ nodes, links, selectedId, controlsRef, inspectorOpen, dofRef }: CameraRigProps) {
   const { camera } = useThree();
-  const currentTarget = useRef(new THREE.Vector3(0, 0, 0));
-  const desiredCamPos = useRef(new THREE.Vector3(0, 8, 38));
 
+  // Refs persistentes para la interpolación suave — no causan re-renders
+  const desiredTarget  = useRef(new THREE.Vector3(0, 0, 0));
+  const desiredCamPos  = useRef(new THREE.Vector3(0, 8, 38));
+  const isTransitioning = useRef(false);
+
+  // ── Recalcular destino al cambiar nodo seleccionado ──────────────────
   useEffect(() => {
-    if (selectedId !== null && nodes[selectedId]) {
-      const node = nodes[selectedId];
-      const nx = Number.isFinite(node.x) ? node.x : 0;
-      const ny = Number.isFinite(node.y) ? node.y : 0;
-      const nz = Number.isFinite(node.z) ? node.z : 0;
-      currentTarget.current.set(nx, ny, nz);
-
-      const nodeVec = new THREE.Vector3(nx, ny, nz);
-      const camDir = nodeVec.clone().normalize();
-      if (camDir.lengthSq() < 0.01) camDir.set(0, 0.4, 1);
-
-      desiredCamPos.current.copy(nodeVec).add(camDir.multiplyScalar(15)).add(new THREE.Vector3(0, 2, 0));
+    if (selectedId === null || !nodes[selectedId]) {
+      // Sin selección: volver al origen
+      desiredTarget.current.set(0, 0, 0);
+      desiredCamPos.current.set(0, 8, 38);
+      isTransitioning.current = true;
+      return;
     }
-  }, [selectedId, nodes]);
 
+    const node = nodes[selectedId];
+    const nx = Number.isFinite(node.x) ? node.x : 0;
+    const ny = Number.isFinite(node.y) ? node.y : 0;
+    const nz = Number.isFinite(node.z) ? node.z : 0;
+    const nodeVec = new THREE.Vector3(nx, ny, nz);
+
+    // 1. Radio del cluster: distancia máxima a vecinos directos
+    let clusterRadius = 0;
+    if (node.connections && node.connections.length > 0) {
+      node.connections.forEach((neighborId) => {
+        const neighbor = nodes[neighborId];
+        if (!neighbor) return;
+        const dx = (Number.isFinite(neighbor.x) ? neighbor.x : 0) - nx;
+        const dy = (Number.isFinite(neighbor.y) ? neighbor.y : 0) - ny;
+        const dz = (Number.isFinite(neighbor.z) ? neighbor.z : 0) - nz;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist > clusterRadius) clusterRadius = dist;
+      });
+    }
+
+    // 2. Distancia de cámara proporcional al cluster
+    //    Nodo aislado → 35 u (nodo < 10% pantalla); conectado → D = max(30, radio×2.2)
+    const camDistance = clusterRadius < 0.5
+      ? 35
+      : Math.max(30, clusterRadius * 2.2);
+
+    // 3. Offset X por panel Inspector (35% derecho del canvas)
+    //    Desplazamos el punto focal +10 u en X para que el nodo quede
+    //    centrado en el 65% izquierdo libre cuando el panel está abierto.
+    const INSPECTOR_OFFSET_X = inspectorOpen ? 10 : 0;
+    const adjustedTarget = nodeVec.clone().add(new THREE.Vector3(INSPECTOR_OFFSET_X, 0, 0));
+
+    // 4. Dirección cámara → nodo (o fallback frontal)
+    const camDir = camera.position.clone().sub(adjustedTarget).normalize();
+    if (camDir.lengthSq() < 0.01) camDir.set(0, 0.4, 1).normalize();
+
+    desiredTarget.current.copy(adjustedTarget);
+    desiredCamPos.current.copy(adjustedTarget).addScaledVector(camDir, camDistance).add(new THREE.Vector3(0, camDistance * 0.05, 0));
+    isTransitioning.current = true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, nodes, inspectorOpen]);
+
+  // ── Bucle de animación ────────────────────────────────────────────────
   useFrame(() => {
-    if (selectedId !== null && controlsRef.current) {
-      controlsRef.current.target.lerp(currentTarget.current, 0.07);
-      camera.position.lerp(desiredCamPos.current, 0.05);
-      controlsRef.current.update();
+    if (!controlsRef.current) return;
+
+    const LERP = 0.05; // Factor de suavizado constante
+
+    // Interpolación suave de posición y target (OrbitControls queda libre)
+    controlsRef.current.target.lerp(desiredTarget.current, LERP);
+    camera.position.lerp(desiredCamPos.current, LERP);
+    controlsRef.current.update();
+
+    // 5. DoF dinámico: la distancia real cámara→target define el foco
+    if (dofRef.current && selectedId !== null) {
+      const realDist = camera.position.distanceTo(controlsRef.current.target);
+      // focusDistance en postprocessing es [0..1] relativo al far plane (camera.far).
+      // Usamos la distancia en unidades mundo normalizada por el far plane.
+      const normalizedFocus = realDist / (camera as THREE.PerspectiveCamera).far;
+      try {
+        // API de postprocessing v6: accedemos al uniform directamente
+        const coc = dofRef.current.circleOfConfusionMaterial;
+        if (coc && coc.uniforms && coc.uniforms.focusDistance) {
+          coc.uniforms.focusDistance.value = normalizedFocus;
+        }
+      } catch {
+        // Silencioso: la API interna puede variar entre versiones
+      }
     }
   });
 
   return null;
 }
+
 
 // -----------------------------------------------------------------------
 // 4. ESCENA 3D PRINCIPAL
@@ -536,6 +600,7 @@ interface SceneProps {
   controlsRef: React.RefObject<any>;
   theme: GraphTheme;
   showLabels?: boolean;
+  inspectorOpen: boolean;
 }
 
 function Scene({
@@ -551,9 +616,11 @@ function Scene({
   onSelect,
   controlsRef,
   theme,
-  showLabels = true
+  showLabels = true,
+  inspectorOpen
 }: SceneProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const dofRef   = useRef<any>(null);          // ref al efecto DepthOfField
   const themeCfg = THEME_CONFIG[theme];
 
   useFrame((_, delta) => {
@@ -598,7 +665,14 @@ function Scene({
         />
       </group>
 
-      <CameraRig nodes={nodes} selectedId={selectedId} controlsRef={controlsRef} />
+      <CameraRig
+        nodes={nodes}
+        links={links}
+        selectedId={selectedId}
+        controlsRef={controlsRef}
+        inspectorOpen={inspectorOpen}
+        dofRef={dofRef}
+      />
 
       <OrbitControls
         ref={controlsRef}
@@ -632,7 +706,8 @@ function Scene({
 
       <EffectComposer multisampling={0}>
         <DepthOfField
-          focusDistance={0.022}
+          ref={dofRef}
+          focusDistance={0.01}
           focalLength={0.16}
           bokehScale={2.2}
           height={480}
@@ -1253,6 +1328,7 @@ export function C137GraphView({
             controlsRef={controlsRef}
             theme={currentTheme}
             showLabels={showLabels}
+            inspectorOpen={selectedNode !== null}
           />
         </Canvas>
       </div>
