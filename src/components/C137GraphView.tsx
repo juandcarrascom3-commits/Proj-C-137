@@ -197,6 +197,10 @@ interface SceneProps {
   showLabels?: boolean;
   inspectorOpen?: boolean;
   activeCategory?: string | null;
+  matchingNodeIds?: Set<number>;
+  onNodeDrag?: (id: number, pos: { x: number; y: number; z: number }) => void;
+  onNodePin?: (id: number, pos: { x: number; y: number; z: number }) => void;
+  recenterTrigger?: number;
 }
 
 function Scene({
@@ -214,7 +218,11 @@ function Scene({
   theme,
   showLabels = true,
   inspectorOpen,
-  activeCategory
+  activeCategory,
+  matchingNodeIds,
+  onNodeDrag,
+  onNodePin,
+  recenterTrigger = 0
 }: SceneProps) {
   const groupRef = useRef<THREE.Group>(null);
   const starsRef = useRef<THREE.Group>(null);
@@ -266,6 +274,11 @@ function Scene({
           bloomBoost={bloomBoost}
           theme={theme}
           activeCategory={activeCategory}
+          showLabels={showLabels}
+          matchingNodeIds={matchingNodeIds}
+          controlsRef={controlsRef}
+          onNodeDrag={onNodeDrag}
+          onNodePin={onNodePin}
         />
         <EdgeLines
           nodes={nodes}
@@ -274,6 +287,7 @@ function Scene({
           selectedId={selectedId}
           theme={theme}
           activeCategory={activeCategory}
+          matchingNodeIds={matchingNodeIds}
         />
       </group>
 
@@ -284,50 +298,24 @@ function Scene({
         controlsRef={controlsRef}
         inspectorOpen={inspectorOpen}
         dofRef={{ current: null }}
+        recenterTrigger={recenterTrigger}
       />
 
       <OrbitControls
         ref={controlsRef}
         enableDamping
         dampingFactor={0.06}
-        minDistance={10}
-        maxDistance={2000}
+        minDistance={5}
+        maxDistance={400}
         rotateSpeed={0.7}
-        panSpeed={0.5}
+        panSpeed={0.6}
       />
-
-      {showLabels && (hoveredId !== null || selectedId !== null) && (() => {
-        const activeId = hoveredId !== null ? hoveredId : selectedId;
-        if (activeId === null) return null;
-        const node = nodes[activeId];
-        if (!node) return null;
-        
-        const isHover = activeId === hoveredId;
-        
-        return (
-          <Html
-            position={[node.x, node.y + (node.baseScale || 0.3) + 0.6, node.z]}
-            center
-            distanceFactor={35}
-            pointerEvents="none"
-            zIndexRange={[100, 0]}
-          >
-            <div className={`px-2.5 py-1 rounded-md bg-gray-950/85 backdrop-blur-md border ${
-              isHover 
-                ? 'border-cyan-400 shadow-[0_0_10px_rgba(0,240,255,0.5)] text-cyan-300' 
-                : 'border-white/20 text-slate-100'
-            } text-xs font-sans shadow-xl whitespace-nowrap select-none transition-all`}>
-              {node.name}
-            </div>
-          </Html>
-        );
-      })()}
 
       <EffectComposer multisampling={0}>
         <Bloom
-          luminanceThreshold={0.15}
-          luminanceSmoothing={0.85}
-          intensity={bloomBoost ? 2.2 : 1.5}
+          luminanceThreshold={0.35}
+          luminanceSmoothing={0.75}
+          intensity={0.8}
           mipmapBlur
         />
       </EffectComposer>
@@ -547,6 +535,7 @@ export function C137GraphView({
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [recenterTrigger, setRecenterTrigger] = useState(0);
 
   const controlsRef = useRef<any>(null);
   const blurTimeoutRef = useRef<any>(null);
@@ -620,12 +609,48 @@ export function C137GraphView({
     dispatchSimulation,
     reheat,
     stop: stopWorkerSimulation,
+    pinNode,
+    unpinNode,
     isSimulating,
     alpha: workerAlpha
   } = useForceWorker({
     onPositionsUpdate: handleWorkerPositionsUpdate,
     onSimulationEnd: handleWorkerSimulationEnd
   });
+
+  const handleNodeDrag = useCallback((id: number, pos: { x: number; y: number; z: number }) => {
+    setNexusGraph((prev) => {
+      const nodes = [...prev.nodes];
+      if (nodes[id]) {
+        nodes[id] = { ...nodes[id], x: pos.x, y: pos.y, z: pos.z };
+        return { ...prev, nodes };
+      }
+      return prev;
+    });
+  }, []);
+
+  const handleNodePin = useCallback((id: number, pos: { x: number; y: number; z: number }) => {
+    // 1. Enviar fijación 3D al Web Worker (establece fx, fy, fz y reactiva alpha suave)
+    pinNode(id, pos);
+
+    // 2. Persistir en Zustand de manera incremental
+    const node = currentGraph.nodes[id];
+    if (node && node.slug) {
+      saveNodePositions({
+        [node.slug]: { x: pos.x, y: pos.y, z: pos.z }
+      });
+    }
+
+    // 3. Actualizar coordenadas locales
+    setNexusGraph((prev) => {
+      const nodes = [...prev.nodes];
+      if (nodes[id]) {
+        nodes[id] = { ...nodes[id], x: pos.x, y: pos.y, z: pos.z };
+        return { ...prev, nodes };
+      }
+      return prev;
+    });
+  }, [pinNode, currentGraph.nodes, saveNodePositions]);
 
   // 3. Orquestador de Topología: Preserva coordenadas previas y delega al Worker
   useEffect(() => {
@@ -757,11 +782,7 @@ export function C137GraphView({
     setActiveCategory(null);
     setSearchTerm('');
     updateUrlNote(null);
-    if (controlsRef.current) {
-      controlsRef.current.target.set(0, 0, 0);
-      controlsRef.current.object.position.set(0, 8, 38);
-      controlsRef.current.update();
-    }
+    setRecenterTrigger(prev => prev + 1);
   };
 
   const handleZoom = (factor: number) => {
@@ -781,11 +802,7 @@ export function C137GraphView({
     setActiveCategory(null);
     updateUrlNote(null);
     if (onNoteSelect) onNoteSelect('');
-    if (controlsRef.current) {
-      controlsRef.current.target.set(0, 0, 0);
-      controlsRef.current.object.position.set(0, 8, 38);
-      controlsRef.current.update();
-    }
+    setRecenterTrigger(prev => prev + 1);
   };
 
   const handleCloseInspector = () => {
@@ -854,6 +871,24 @@ export function C137GraphView({
     }
   };
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const matchingNodeIds = useMemo(() => {
+    if (!searchTerm.trim()) return new Set<number>();
+    const q = searchTerm.toLowerCase();
+    const set = new Set<number>();
+    currentGraph.nodes.forEach((n, idx) => {
+      if (
+        n.name.toLowerCase().includes(q) ||
+        (n.category && n.category.toLowerCase().includes(q)) ||
+        (n.tags && n.tags.some((t) => t.toLowerCase().includes(q)))
+      ) {
+        set.add(idx);
+      }
+    });
+    return set;
+  }, [searchTerm, currentGraph.nodes]);
+
   const searchResults = useMemo(() => {
     if (!searchTerm.trim()) return [];
     const q = searchTerm.toLowerCase();
@@ -865,6 +900,18 @@ export function C137GraphView({
       )
       .slice(0, 8);
   }, [searchTerm, currentGraph]);
+
+  // Atajo global de teclado: Presionar '/' para enfocar el buscador rápido
+  useEffect(() => {
+    const handleSlashKey = (e: KeyboardEvent) => {
+      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleSlashKey);
+    return () => window.removeEventListener('keydown', handleSlashKey);
+  }, []);
 
   const themeCfg = THEME_CONFIG[currentTheme];
 
@@ -890,7 +937,7 @@ export function C137GraphView({
             links={currentGraph.links}
             dataModeKey={dataMode}
             autoRotate={autoRotate}
-            bloomBoost={bloomBoost}
+            bloomBoost={bloomBoost || matchingNodeIds.size > 0}
             hoveredId={hoveredId}
             selectedId={selectedId}
             activeNeighbors={activeNeighbors}
@@ -901,6 +948,10 @@ export function C137GraphView({
             showLabels={showLabels}
             inspectorOpen={selectedNode !== null}
             activeCategory={activeCategory}
+            matchingNodeIds={matchingNodeIds}
+            onNodeDrag={handleNodeDrag}
+            onNodePin={handleNodePin}
+            recenterTrigger={recenterTrigger}
           />
         </Canvas>
       </div>
@@ -949,36 +1000,76 @@ export function C137GraphView({
         </div>
       </div>
 
-      {/* 2. BUSCADOR EN LA PARTE SUPERIOR DERECHA */}
-      <div className="absolute top-4 right-4 z-20 flex items-center gap-2 pointer-events-auto">
+      {/* 2. BUSCADOR RÁPIDO FLOTANTE EN CANVAS 3D (BLOOM BOOST EN TIEMPO REAL) */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto w-full max-w-sm px-4">
         <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onFocus={() => setIsSearchFocused(true)}
-            onBlur={() => {
-              if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
-              blurTimeoutRef.current = setTimeout(() => setIsSearchFocused(false), 200);
-            }}
-            placeholder="Buscar notas..."
-            className="w-48 sm:w-60 pl-9 pr-8 py-1.5 text-xs text-slate-200 placeholder:text-slate-500
-                       bg-gray-950/60 hover:bg-gray-950/80 focus:bg-gray-950
-                       border border-white/10 focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/30
-                       rounded-full backdrop-blur-md outline-none transition-all shadow-lg"
-          />
-          {searchTerm && (
-            <button
-              onClick={() => setSearchTerm('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 rounded-full"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          )}
+          <div className="relative flex items-center">
+            <Search className={`w-4 h-4 absolute left-3.5 transition-colors ${
+              matchingNodeIds.size > 0 ? 'text-cyan-400 animate-pulse' : 'text-slate-400'
+            }`} />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => {
+                if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+                blurTimeoutRef.current = setTimeout(() => setIsSearchFocused(false), 220);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && searchResults.length > 0) {
+                  handleSelectNode(searchResults[0].id);
+                  setIsSearchFocused(false);
+                  searchInputRef.current?.blur();
+                } else if (e.key === 'Escape') {
+                  setSearchTerm('');
+                  setIsSearchFocused(false);
+                  searchInputRef.current?.blur();
+                }
+              }}
+              placeholder="Buscar en el grafo 3D... (Presiona /)"
+              className="w-full pl-10 pr-24 py-2 text-xs text-slate-100 placeholder:text-slate-500
+                         bg-gray-950/80 hover:bg-gray-950/90 focus:bg-gray-950
+                         border border-white/15 focus:border-cyan-400/80 focus:ring-2 focus:ring-cyan-400/20
+                         rounded-full backdrop-blur-xl outline-none transition-all shadow-2xl"
+            />
+            
+            <div className="absolute right-3 flex items-center gap-1.5 pointer-events-auto">
+              {searchTerm ? (
+                <>
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
+                    matchingNodeIds.size > 0 
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 shadow-[0_0_8px_rgba(0,240,255,0.3)]' 
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
+                  }`}>
+                    {matchingNodeIds.size > 0 ? `${matchingNodeIds.size}` : '0'}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      searchInputRef.current?.focus();
+                    }}
+                    className="text-slate-400 hover:text-white p-0.5 rounded-full transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              ) : (
+                <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-white/5 border border-white/10 rounded">
+                  /
+                </kbd>
+              )}
+            </div>
+          </div>
 
+          {/* Menú flotante de resultados rápidos */}
           {isSearchFocused && searchResults.length > 0 && (
-            <div className="absolute top-full right-0 mt-2 w-64 max-h-60 overflow-y-auto rounded-xl bg-gray-950/90 backdrop-blur-md border border-white/10 shadow-2xl p-1 space-y-0.5 z-30">
+            <div className="absolute top-full left-0 right-0 mt-2 max-h-64 overflow-y-auto rounded-2xl bg-gray-950/95 backdrop-blur-xl border border-white/15 shadow-2xl p-1.5 space-y-1 z-30">
+              <div className="flex items-center justify-between px-2 py-1 text-[10px] font-mono text-slate-400 border-b border-white/5">
+                <span>Coincidencias en constelación</span>
+                <span className="text-cyan-400">Enter para enfocar</span>
+              </div>
               {searchResults.map((node) => (
                 <button
                   key={node.id}
@@ -988,10 +1079,13 @@ export function C137GraphView({
                     setSearchTerm('');
                     setIsSearchFocused(false);
                   }}
-                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-left text-xs text-slate-200 hover:text-white hover:bg-cyan-500/15 transition-all group"
                 >
-                  <span className="truncate">{node.name}</span>
-                  <span className="text-[10px] font-mono text-slate-400 shrink-0 ml-2">
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_6px_#00f0ff] shrink-0" />
+                    <span className="truncate font-medium group-hover:text-cyan-200">{node.name}</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 shrink-0 ml-2 bg-white/5 px-2 py-0.5 rounded-md">
                     {node.category || (node.type === 'primary' ? 'Nota' : 'Hub')}
                   </span>
                 </button>

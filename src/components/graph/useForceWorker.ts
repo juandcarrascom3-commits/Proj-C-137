@@ -159,10 +159,35 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
     }
   }, []);
 
+  const pinNode = useCallback((id: number, coords: { x: number; y: number; z: number }) => {
+    if (workerRef.current) {
+      workerRef.current.postMessage({
+        type: 'PIN_NODE',
+        id,
+        fx: coords.x,
+        fy: coords.y,
+        fz: coords.z
+      });
+      setState(prev => ({ ...prev, isSimulating: true }));
+    }
+  }, []);
+
+  const unpinNode = useCallback((id: number) => {
+    if (workerRef.current) {
+      workerRef.current.postMessage({
+        type: 'UNPIN_NODE',
+        id
+      });
+      setState(prev => ({ ...prev, isSimulating: true }));
+    }
+  }, []);
+
   return {
     dispatchSimulation,
     reheat,
     stop,
+    pinNode,
+    unpinNode,
     isSimulating: state.isSimulating,
     alpha: state.alpha,
     workerSupported: state.workerSupported

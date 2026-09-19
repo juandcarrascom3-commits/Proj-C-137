@@ -24,6 +24,9 @@ export interface WorkerNode {
   vx?: number;
   vy?: number;
   vz?: number;
+  fx?: number | null;
+  fy?: number | null;
+  fz?: number | null;
 }
 
 export interface WorkerLink {
@@ -57,7 +60,25 @@ export interface WorkerStopPayload {
   type: 'STOP';
 }
 
-export type WorkerInMessage = WorkerInitPayload | WorkerReheatPayload | WorkerStopPayload;
+export interface WorkerPinPayload {
+  type: 'PIN_NODE';
+  id: number;
+  fx: number;
+  fy: number;
+  fz: number;
+}
+
+export interface WorkerUnpinPayload {
+  type: 'UNPIN_NODE';
+  id: number;
+}
+
+export type WorkerInMessage = 
+  | WorkerInitPayload 
+  | WorkerReheatPayload 
+  | WorkerStopPayload 
+  | WorkerPinPayload 
+  | WorkerUnpinPayload;
 
 // Declaración de contexto de Worker para tipado flexible en Web Worker
 const ctx: any = self;
@@ -157,7 +178,10 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
         z: Number.isFinite(n.z) ? n.z : 0,
         vx: n.vx,
         vy: n.vy,
-        vz: n.vz
+        vz: n.vz,
+        fx: n.fx !== undefined ? n.fx : undefined,
+        fy: n.fy !== undefined ? n.fy : undefined,
+        fz: n.fz !== undefined ? n.fz : undefined
       }));
 
       // Copia de links para evitar mutaciones inesperadas
@@ -229,6 +253,48 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
     case 'REHEAT': {
       if (simulation) {
         simulation.alpha(data.alpha || 0.3).restart();
+        if (!isRunning) {
+          isRunning = true;
+          stepSimulation();
+        }
+      }
+      break;
+    }
+
+    case 'PIN_NODE': {
+      const { id, fx, fy, fz } = data;
+      const target = currentNodes.find(n => n.id === id);
+      if (target) {
+        target.fx = fx;
+        target.fy = fy;
+        target.fz = fz;
+        target.x = fx;
+        target.y = fy;
+        target.z = fz;
+        target.vx = 0;
+        target.vy = 0;
+        target.vz = 0;
+      }
+      if (simulation) {
+        simulation.alpha(0.25).restart();
+        if (!isRunning) {
+          isRunning = true;
+          stepSimulation();
+        }
+      }
+      break;
+    }
+
+    case 'UNPIN_NODE': {
+      const { id } = data;
+      const target = currentNodes.find(n => n.id === id);
+      if (target) {
+        target.fx = null;
+        target.fy = null;
+        target.fz = null;
+      }
+      if (simulation) {
+        simulation.alpha(0.2).restart();
         if (!isRunning) {
           isRunning = true;
           stepSimulation();
