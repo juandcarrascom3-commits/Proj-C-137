@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Stars } from '@react-three/drei';
+import { OrbitControls, Stars, Html } from '@react-three/drei';
 import { EffectComposer, Bloom, DepthOfField } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import ReactMarkdown from 'react-markdown';
@@ -11,23 +11,20 @@ import {
   forceCenter 
 } from 'd3-force-3d';
 import { 
-  Activity, 
-  Share2, 
-  RotateCw, 
-  Cpu, 
-  Layers, 
-  Sparkles, 
-  X, 
-  Target, 
-  ArrowRight, 
-  FileText, 
-  Tag, 
-  Link2, 
-  Compass, 
-  Zap, 
-  Database, 
-  Globe,
-  Palette
+  Play,
+  Pause,
+  Crosshair,
+  Plus,
+  Minus,
+  Type,
+  Search,
+  X,
+  FileText,
+  Tag,
+  Link2,
+  ArrowRight,
+  Database,
+  Sparkles
 } from 'lucide-react';
 
 import { parseNotesToGraph, Graph3DNode, Graph3DLink, NexusNote } from '../utils/graphParser';
@@ -530,6 +527,7 @@ interface SceneProps {
   onSelect: (id: number) => void;
   controlsRef: React.RefObject<any>;
   theme: GraphTheme;
+  showLabels?: boolean;
 }
 
 function Scene({
@@ -544,7 +542,8 @@ function Scene({
   onHover,
   onSelect,
   controlsRef,
-  theme
+  theme,
+  showLabels = true
 }: SceneProps) {
   const groupRef = useRef<THREE.Group>(null);
   const themeCfg = THEME_CONFIG[theme];
@@ -597,10 +596,31 @@ function Scene({
         ref={controlsRef}
         enableDamping
         dampingFactor={0.06}
-        minDistance={6}
-        maxDistance={80}
-        rotateSpeed={0.75}
+        minDistance={10}
+        maxDistance={3000}
+        rotateSpeed={0.7}
+        panSpeed={0.5}
       />
+
+      {/* Floating 3D label on hover/select when showLabels is enabled */}
+      {showLabels && (hoveredId !== null || selectedId !== null) && (() => {
+        const activeId = hoveredId !== null ? hoveredId : selectedId;
+        if (activeId === null) return null;
+        const node = nodes[activeId];
+        if (!node) return null;
+        return (
+          <Html
+            position={[node.x, node.y + (node.baseScale || 0.3) + 0.6, node.z]}
+            center
+            distanceFactor={35}
+            pointerEvents="none"
+          >
+            <div className="px-2 py-0.5 rounded-md bg-gray-950/80 backdrop-blur-md border border-white/20 text-[11px] font-sans text-slate-100 shadow-xl whitespace-nowrap select-none">
+              {node.name}
+            </div>
+          </Html>
+        );
+      })()}
 
       <EffectComposer multisampling={0}>
         <DepthOfField
@@ -636,6 +656,10 @@ export function C137GraphView({
   const [bloomBoost, setBloomBoost] = useState(false);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [showLabels, setShowLabels] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   const controlsRef = useRef<any>(null);
 
@@ -685,12 +709,133 @@ export function C137GraphView({
     setDataMode(newMode);
     setSelectedId(null);
     setHoveredId(null);
+    setActiveCategory(null);
+    setSearchTerm('');
     if (controlsRef.current) {
       controlsRef.current.target.set(0, 0, 0);
+      controlsRef.current.object.position.set(0, 8, 38);
+      controlsRef.current.update();
     }
   };
 
+  const handleZoom = (factor: number) => {
+    if (controlsRef.current) {
+      const cam = controlsRef.current.object;
+      const target = controlsRef.current.target;
+      const offset = cam.position.clone().sub(target);
+      offset.multiplyScalar(factor);
+      cam.position.copy(target).add(offset);
+      controlsRef.current.update();
+    }
+  };
+
+  const handleResetCamera = () => {
+    setSelectedId(null);
+    setHoveredId(null);
+    setActiveCategory(null);
+    if (onNoteSelect) {
+      onNoteSelect('');
+    }
+    if (controlsRef.current) {
+      controlsRef.current.target.set(0, 0, 0);
+      controlsRef.current.object.position.set(0, 8, 38);
+      controlsRef.current.update();
+    }
+  };
+
+  const handleCloseInspector = () => {
+    setSelectedId(null);
+    if (onNoteSelect) {
+      onNoteSelect('');
+    }
+  };
+
+  // Atajo de teclado Esc para limpiar selección
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedId(null);
+        setSearchTerm('');
+        if (onNoteSelect) {
+          onNoteSelect('');
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onNoteSelect]);
+
   const selectedNode = selectedId !== null ? currentGraph.nodes[selectedId] : null;
+
+  // Retener el nodo para animación fluida de salida en el Inspector
+  const lastSelectedNodeRef = useRef<Graph3DNode | null>(null);
+  if (selectedNode) {
+    lastSelectedNodeRef.current = selectedNode;
+  }
+  const displayNode = selectedNode || lastSelectedNodeRef.current;
+
+  // Categorías y conteos dinámicos
+  const categories = useMemo(() => {
+    const map = new Map<string, { count: number; color: string }>();
+    const PALETTE = [
+      '#00f0ff', // Cian
+      '#a855f7', // Violeta
+      '#f59e0b', // Ámbar
+      '#10b981', // Esmeralda
+      '#ec4899', // Rosa
+      '#38bdf8', // Celeste
+      '#fb923c', // Naranja
+    ];
+    let colorIdx = 0;
+
+    currentGraph.nodes.forEach((n) => {
+      let cat = n.category;
+      if (!cat) {
+        cat = n.type === 'primary' ? 'Notas' : 'Hubs';
+      }
+      const existing = map.get(cat);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        const color = PALETTE[colorIdx % PALETTE.length];
+        colorIdx++;
+        map.set(cat, { count: 1, color });
+      }
+    });
+
+    return Array.from(map.entries()).map(([name, val]) => ({
+      name,
+      count: val.count,
+      color: val.color,
+    }));
+  }, [currentGraph]);
+
+  const handleFilterCategory = (catName: string) => {
+    if (activeCategory === catName) {
+      setActiveCategory(null);
+    } else {
+      setActiveCategory(catName);
+      const firstInCat = currentGraph.nodes.find(
+        n => (n.category === catName) || (!n.category && (catName === 'Notas' || catName === 'Hubs'))
+      );
+      if (firstInCat) {
+        handleSelectNode(firstInCat.id);
+      }
+    }
+  };
+
+  // Resultados de búsqueda
+  const searchResults = useMemo(() => {
+    if (!searchTerm.trim()) return [];
+    const q = searchTerm.toLowerCase();
+    return currentGraph.nodes
+      .filter(n => 
+        n.name.toLowerCase().includes(q) || 
+        (n.category && n.category.toLowerCase().includes(q)) || 
+        (n.tags && n.tags.some(t => t.toLowerCase().includes(q)))
+      )
+      .slice(0, 8);
+  }, [searchTerm, currentGraph]);
 
   const totalPrimary = useMemo(() => currentGraph.nodes.filter(n => n.type === 'primary').length, [currentGraph]);
   const totalRelay = useMemo(() => currentGraph.nodes.filter(n => n.type === 'relay').length, [currentGraph]);
@@ -705,7 +850,7 @@ export function C137GraphView({
         className="absolute inset-0 z-0"
         onPointerDown={(e) => {
           if (e.target === e.currentTarget && selectedId !== null) {
-            setSelectedId(null);
+            handleCloseInspector();
           }
         }}
       >
@@ -730,372 +875,332 @@ export function C137GraphView({
             onSelect={handleSelectNode}
             controlsRef={controlsRef}
             theme={currentTheme}
+            showLabels={showLabels}
           />
         </Canvas>
       </div>
 
-      {/* RENDERIZADO CONDICIONAL DE HUD (STANDALONE = TRUE) */}
-      {standalone && (
-        <>
-          {/* SELECTOR FLOTANTE CENTRAL DE MODO Y TEMA */}
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 pointer-events-auto">
-            <div className={`flex items-center p-1 rounded-xl bg-slate-950/80 border ${themeCfg.borderClass} backdrop-blur-xl shadow-lg`}>
-              <button
-                id="btn-mode-nexus"
-                onClick={() => handleModeChange('nexus')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all ${
-                  dataMode === 'nexus'
-                    ? `${themeCfg.primaryClass} border shadow-md`
-                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
-                }`}
-              >
-                <Database className="w-3.5 h-3.5" />
-                <span>BBDD NEXUS ({sourceNotes.length})</span>
-              </button>
+      {/* 1. LEYENDA SUPERIOR IZQUIERDA (EL FILTRO VISUAL) */}
+      <div className="absolute top-5 left-5 z-20 flex flex-col gap-2 pointer-events-auto max-w-[240px]">
+        {/* Título minimalista "Nexus Graph" */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-950/60 backdrop-blur-md border border-white/10 shadow-lg w-fit">
+          <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#00f0ff] animate-pulse" />
+          <span className="text-xs font-semibold text-white tracking-wide font-sans">
+            Nexus Graph
+          </span>
+          <span className="text-[10px] font-mono text-slate-400">
+            {currentGraph.nodes.length}
+          </span>
+        </div>
 
-              <button
-                id="btn-mode-constellation"
-                onClick={() => handleModeChange('constellation')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all ${
-                  dataMode === 'constellation'
-                    ? `${themeCfg.relayClass} border shadow-md`
-                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
-                }`}
-              >
-                <Globe className="w-3.5 h-3.5" />
-                <span>150 Nodos</span>
-              </button>
-            </div>
-
-            {/* Selector Rápido de Temas */}
-            <div className={`flex items-center gap-1 p-1 rounded-xl bg-slate-950/80 border ${themeCfg.borderClass} backdrop-blur-xl shadow-lg`}>
-              {(['cyberpunk', 'emerald', 'amber'] as GraphTheme[]).map((t) => (
+        {/* Tarjeta minimalista de Categorías */}
+        <div className="p-3 rounded-2xl bg-gray-950/60 backdrop-blur-md border border-white/10 shadow-xl space-y-1.5">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 px-1">
+            Categorías
+          </div>
+          <div className="space-y-0.5">
+            {categories.map((cat) => {
+              const isSelected = activeCategory === cat.name;
+              return (
                 <button
-                  key={t}
-                  onClick={() => setCurrentTheme(t)}
-                  title={`Tema ${t.toUpperCase()}`}
-                  className={`px-2 py-1.5 rounded-lg text-[10px] font-mono uppercase font-bold transition-all ${
-                    currentTheme === t
-                      ? 'bg-white/10 text-white border border-white/20'
-                      : 'text-slate-500 hover:text-slate-300'
+                  key={cat.name}
+                  onClick={() => handleFilterCategory(cat.name)}
+                  className={`w-full flex items-center justify-between px-2 py-1 rounded-lg text-xs transition-all ${
+                    isSelected 
+                      ? 'bg-white/10 text-white font-medium' 
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
                   }`}
                 >
-                  {t[0]}
+                  <div className="flex items-center gap-2 truncate">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{
+                        backgroundColor: cat.color,
+                        boxShadow: `0 0 6px ${cat.color}`
+                      }}
+                    />
+                    <span className="truncate font-sans text-[11px]">{cat.name}</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 ml-2">
+                    {cat.count}
+                  </span>
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
-
-          {/* TELEMETRÍA SUPERIOR DERECHA */}
-          <div className="absolute top-6 right-6 z-10 hidden lg:flex flex-col items-end gap-1 font-mono text-xs text-cyan-400/80 pointer-events-none">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md bg-slate-950/70 border ${themeCfg.borderClass} backdrop-blur-md`}>
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: themeCfg.primaryHex }}></span>
-                <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: themeCfg.primaryHex }}></span>
-              </span>
-              <span className="tracking-widest font-bold text-white">
-                THEME: {currentTheme.toUpperCase()}
-              </span>
-              <span className="text-slate-600">|</span>
-              <span className="text-slate-400">60 FPS</span>
-            </div>
-          </div>
-
-          {/* PANEL HUD IZQUIERDO FLOTANTE */}
-          <div 
-            id="c137-left-hud"
-            className={`absolute top-6 left-6 z-10 w-76 md:w-84 rounded-2xl p-5 
-                       backdrop-blur-xl bg-slate-950/75 border ${themeCfg.borderClass}
-                       shadow-[0_0_40px_${themeCfg.glowColor}] transition-all duration-300 pointer-events-auto`}
-          >
-            <div className="flex items-start justify-between pb-3 border-b border-white/10">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-0.5 text-[10px] font-mono font-bold tracking-widest uppercase rounded border ${themeCfg.primaryClass}`}>
-                    &lt;C137GraphView /&gt;
-                  </span>
-                </div>
-                <h1 className="mt-1 text-base font-bold tracking-tight text-white flex items-center gap-2">
-                  {dataMode === 'nexus' ? 'BBDD Nexus Graph' : 'Constellation Graph'}
-                </h1>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  {dataMode === 'nexus' ? 'Notas Markdown conectadas' : 'Simulación d3-force-3d'}
-                </p>
-              </div>
-              <div className={`p-2 rounded-lg bg-slate-900 border ${themeCfg.borderClass} ${themeCfg.textAccentClass}`}>
-                {dataMode === 'nexus' ? <Database className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
-              </div>
-            </div>
-
-            {/* Métricas */}
-            <div className="grid grid-cols-2 gap-2.5 my-3">
-              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80">
-                <div className="flex items-center gap-1.5 text-slate-400 text-xs font-mono">
-                  <Cpu className="w-3.5 h-3.5" style={{ color: themeCfg.primaryHex }} />
-                  <span>ENTIDADES</span>
-                </div>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-xl font-bold font-mono text-white">{currentGraph.nodes.length}</span>
-                  <span className="text-[10px] font-mono text-slate-400">NODOS</span>
-                </div>
-              </div>
-
-              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80">
-                <div className="flex items-center gap-1.5 text-slate-400 text-xs font-mono">
-                  <Activity className="w-3.5 h-3.5" style={{ color: themeCfg.relayHex }} />
-                  <span>VÍNCULOS</span>
-                </div>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-xl font-bold font-mono text-white">{currentGraph.links.length}</span>
-                  <span className="text-[10px] font-mono text-slate-400">ENLACES</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Leyenda */}
-            <div className="space-y-1.5 py-2 border-t border-slate-800 text-xs">
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: themeCfg.primaryHex, boxShadow: `0 0 8px ${themeCfg.primaryHex}` }}></span>
-                  {dataMode === 'nexus' ? 'Notas Markdown' : 'Primarios'}
-                </span>
-                <span className="font-mono font-semibold text-white">{totalPrimary}</span>
-              </div>
-
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: themeCfg.relayHex, boxShadow: `0 0 8px ${themeCfg.relayHex}` }}></span>
-                  {dataMode === 'nexus' ? 'Hubs de Etiquetas' : 'Relés Cuánticos'}
-                </span>
-                <span className="font-mono font-semibold text-white">{totalRelay}</span>
-              </div>
-            </div>
-
-            {/* Controles */}
-            <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between gap-2">
-              <button
-                onClick={() => setAutoRotate(prev => !prev)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all ${
-                  autoRotate 
-                    ? `${themeCfg.primaryClass} border shadow-sm` 
-                    : 'bg-slate-900/80 text-slate-400 border border-slate-800 hover:text-white'
-                }`}
-              >
-                <RotateCw className={`w-3 h-3 ${autoRotate ? 'animate-spin' : ''}`} style={{ animationDuration: '6s' }} />
-                <span>{autoRotate ? 'Órbita' : 'Pausa'}</span>
-              </button>
-
-              <button
-                onClick={() => setBloomBoost(prev => !prev)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all ${
-                  bloomBoost 
-                    ? `${themeCfg.relayClass} border shadow-sm` 
-                    : 'bg-slate-900/80 text-slate-400 border border-slate-800 hover:text-white'
-                }`}
-              >
-                <Sparkles className="w-3 h-3" />
-                <span>Bloom {bloomBoost ? 'Ultra' : 'Normal'}</span>
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* PANEL LATERAL DERECHO DE INSPECCIÓN DE NODO */}
-      {selectedNode && (
-        <div 
-          id="c137-node-inspector"
-          className={`absolute top-6 right-6 z-20 w-84 md:w-96 max-h-[calc(100vh-3rem)] flex flex-col rounded-2xl p-5 md:p-6
-                     backdrop-blur-xl bg-slate-950/85 border ${themeCfg.borderClass}
-                     shadow-[0_0_50px_${themeCfg.glowColor}]
-                     animate-in fade-in slide-in-from-right-4 duration-300 pointer-events-auto overflow-hidden`}
-        >
-          {/* Cabecera */}
-          <div className="flex items-start justify-between pb-3 border-b border-white/10 shrink-0">
-            <div className="flex items-center gap-2.5">
-              <div className={`p-2 rounded-lg border ${
-                selectedNode.type === 'primary' ? themeCfg.primaryClass : themeCfg.relayClass
-              }`}>
-                {selectedNode.type === 'primary' ? (
-                  <FileText className="w-5 h-5 animate-pulse" />
-                ) : (
-                  <Tag className="w-5 h-5 animate-pulse" />
-                )}
-              </div>
-              <div>
-                <span className="text-[10px] font-mono tracking-widest uppercase" style={{ color: themeCfg.primaryHex }}>
-                  {selectedNode.type === 'primary' ? 'NOTA' : 'HUB TAG'} #{selectedNode.id}
-                </span>
-                <h2 className="text-sm font-bold text-white tracking-wide leading-tight">
-                  {selectedNode.name}
-                </h2>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setSelectedId(null)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"
-              title="Cerrar Inspector"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Categoría y Badges */}
-          <div className="flex items-center gap-2 my-3 shrink-0 flex-wrap">
-            <span className={`px-2.5 py-1 rounded-full text-xs font-mono font-medium border flex items-center gap-1.5 ${
-              selectedNode.type === 'primary' ? themeCfg.primaryClass : themeCfg.relayClass
-            }`}>
-              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: selectedNode.type === 'primary' ? themeCfg.primaryHex : themeCfg.relayHex }}></span>
-              {selectedNode.type === 'primary' ? (selectedNode.category || 'Nota') : 'Hub Relé'}
-            </span>
-
-            <span className="px-2.5 py-1 rounded-full text-xs font-mono bg-slate-900 border border-slate-800 text-slate-300 flex items-center gap-1">
-              <Link2 className="w-3 h-3" style={{ color: themeCfg.primaryHex }} />
-              {selectedNode.connections.length} Vínculos
-            </span>
-
-            {selectedNode.tags && selectedNode.tags.map((t, idx) => (
-              <span key={idx} className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900/90 border border-white/10 text-slate-300">
-                #{t.replace(/^#/, '')}
-              </span>
-            ))}
-          </div>
-
-          {/* CUERPO DEL INSPECTOR */}
-          <div className="flex-1 overflow-y-auto pr-1 space-y-3.5 custom-scrollbar">
-            {selectedNode.content ? (
-              <div className="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800/90 text-xs">
-                <div className="flex items-center justify-between text-[11px] font-mono mb-2 pb-1.5 border-b border-slate-800" style={{ color: themeCfg.primaryHex }}>
-                  <span className="flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5" />
-                    CONTENIDO MARKDOWN
-                  </span>
-                  <span className="text-slate-500">ID: {selectedNode.slug}</span>
-                </div>
-                
-                <div className="prose prose-invert prose-xs max-w-none text-slate-300 leading-relaxed font-sans space-y-2">
-                  <ReactMarkdown
-                    components={{
-                      h1: ({ children }) => <h1 className="text-sm font-bold text-white mt-2 mb-1">{children}</h1>,
-                      h2: ({ children }) => <h2 className="text-xs font-bold text-white mt-2 mb-1">{children}</h2>,
-                      h3: ({ children }) => <h3 className="text-xs font-semibold text-slate-200 mt-2 mb-1">{children}</h3>,
-                      p: ({ children }) => <p className="text-xs text-slate-300 mb-2">{children}</p>,
-                      ul: ({ children }) => <ul className="list-disc pl-4 space-y-1 mb-2 text-slate-300">{children}</ul>,
-                      li: ({ children }) => <li className="text-xs">{children}</li>,
-                      code: ({ children }) => <code className="bg-slate-950 px-1.5 py-0.5 rounded text-[10px] font-mono border border-slate-800 text-cyan-200">{children}</code>,
-                      pre: ({ children }) => <pre className="bg-slate-950/90 p-2.5 rounded-lg border border-slate-800 text-[11px] font-mono overflow-x-auto my-2 text-cyan-200">{children}</pre>,
-                    }}
-                  >
-                    {selectedNode.content}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2 p-3 rounded-xl bg-slate-900/60 border border-slate-800/90 text-xs font-mono">
-                <div className="flex justify-between text-slate-400">
-                  <span className="flex items-center gap-1">
-                    <Compass className="w-3.5 h-3.5" style={{ color: themeCfg.primaryHex }} />
-                    Posición 3D:
-                  </span>
-                  <span className="font-semibold text-white">
-                    X:{selectedNode.x.toFixed(1)} Y:{selectedNode.y.toFixed(1)} Z:{selectedNode.z.toFixed(1)}
-                  </span>
-                </div>
-
-                <div className="flex justify-between text-slate-400">
-                  <span className="flex items-center gap-1">
-                    <Zap className="w-3.5 h-3.5 text-amber-400" />
-                    Ancho de Banda:
-                  </span>
-                  <span className="text-white">{selectedNode.bandwidth}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Lista Interactiva de Conexiones */}
-            <div>
-              <div className="flex items-center justify-between text-xs mb-2">
-                <span className="font-mono text-slate-400 flex items-center gap-1.5">
-                  <Share2 className="w-3.5 h-3.5" style={{ color: themeCfg.primaryHex }} />
-                  Nodos Conectados ({selectedNode.connections.length})
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">Click para enfocar</span>
-              </div>
-
-              <div className="space-y-1.5">
-                {selectedNode.connections.map(neighborId => {
-                  const neighbor = currentGraph.nodes[neighborId];
-                  if (!neighbor) return null;
-                  const isPrimary = neighbor.type === 'primary';
-
-                  return (
-                    <button
-                      key={neighborId}
-                      onClick={() => handleSelectNode(neighborId)}
-                      onMouseEnter={() => setHoveredId(neighborId)}
-                      onMouseLeave={() => setHoveredId(null)}
-                      className="w-full flex items-center justify-between p-2 rounded-lg bg-slate-900/50 hover:bg-slate-800/60 border border-slate-800 hover:border-white/20 transition-all text-left text-xs group"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: isPrimary ? themeCfg.primaryHex : themeCfg.relayHex }} />
-                        <div>
-                          <div className="font-mono text-slate-200 group-hover:text-white transition-colors">
-                            {neighbor.name}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            {isPrimary ? (neighbor.category || 'Nota') : 'Hub Tag'} // #{neighbor.id}
-                          </div>
-                        </div>
-                      </div>
-
-                      <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-white group-hover:translate-x-0.5 transition-all" />
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* Botón de Recentrado */}
-          <div className="mt-3 pt-2.5 border-t border-slate-800 shrink-0">
-            <button
-              onClick={() => {
-                if (controlsRef.current) {
-                  controlsRef.current.target.set(selectedNode.x, selectedNode.y, selectedNode.z);
-                }
-              }}
-              className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border text-xs font-mono font-semibold transition-all ${themeCfg.primaryClass}`}
-            >
-              <Target className="w-3.5 h-3.5" />
-              Re-Centrar Cámara en Nodo
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* GUÍA DE INTERACCIÓN INFERIOR */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-        <div className={`flex items-center gap-3 md:gap-4 px-4 py-2 rounded-full bg-slate-950/70 border ${themeCfg.borderClass} backdrop-blur-md text-[11px] font-mono text-slate-300 shadow-xl`}>
-          <span className="flex items-center gap-1.5">
-            <span className="font-bold" style={{ color: themeCfg.primaryHex }}>HOVER:</span> Resaltar Vecinos
-          </span>
-          <span className="text-slate-700">|</span>
-          <span className="flex items-center gap-1.5">
-            <span className="font-bold" style={{ color: themeCfg.primaryHex }}>CLICK:</span> Enfocar & Leer
-          </span>
-          <span className="text-slate-700">|</span>
-          <span className="flex items-center gap-1.5">
-            <span className="font-bold" style={{ color: themeCfg.primaryHex }}>FONDO:</span> Deseleccionar
-          </span>
         </div>
       </div>
 
-      {/* BORDES CIBERNÉTICOS */}
-      <div className="absolute top-4 left-4 w-4 h-4 border-t-2 border-l-2 border-white/20 pointer-events-none" />
-      <div className="absolute top-4 right-4 w-4 h-4 border-t-2 border-r-2 border-white/20 pointer-events-none" />
-      <div className="absolute bottom-4 left-4 w-4 h-4 border-b-2 border-l-2 border-white/20 pointer-events-none" />
-      <div className="absolute bottom-4 right-4 w-4 h-4 border-b-2 border-r-2 border-white/20 pointer-events-none" />
+      {/* 2. BUSCADOR SUTIL (SUPERIOR DERECHA) */}
+      <div className="absolute top-5 right-5 z-20 flex items-center gap-2 pointer-events-auto">
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onFocus={() => setIsSearchFocused(true)}
+            onBlur={() => {
+              setTimeout(() => setIsSearchFocused(false), 200);
+            }}
+            placeholder="Buscar notas..."
+            className="w-44 sm:w-56 pl-9 pr-8 py-1.5 text-xs font-sans text-slate-200 placeholder:text-slate-500
+                       bg-gray-950/40 hover:bg-gray-950/60 focus:bg-gray-950/80
+                       border border-white/10 focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/30
+                       rounded-full backdrop-blur-md outline-none transition-all shadow-lg"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 rounded-full"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+
+          {/* Resultados flotantes de búsqueda */}
+          {isSearchFocused && searchResults.length > 0 && (
+            <div className="absolute top-full right-0 mt-2 w-64 max-h-60 overflow-y-auto rounded-xl bg-gray-950/85 backdrop-blur-md border border-white/10 shadow-2xl p-1 space-y-0.5 z-30">
+              {searchResults.map((node) => (
+                <button
+                  key={node.id}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleSelectNode(node.id);
+                    setSearchTerm('');
+                    setIsSearchFocused(false);
+                  }}
+                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <span className="truncate font-sans">{node.name}</span>
+                  <span className="text-[10px] font-mono text-slate-400 shrink-0 ml-2">
+                    {node.category || (node.type === 'primary' ? 'Nota' : 'Hub')}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 3. BARRA DE HERRAMIENTAS INFERIOR (DOCK ESTILO OBSIDIAN / GRAPHIFY) */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+        <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-gray-950/60 backdrop-blur-md border border-white/10 shadow-2xl text-slate-300">
+          {/* Fluir / Congelar (Físicas / Órbita) */}
+          <button
+            onClick={() => setAutoRotate(prev => !prev)}
+            title={autoRotate ? "Congelar movimiento" : "Fluir constelación"}
+            className={`p-2 rounded-full transition-all ${
+              autoRotate 
+                ? 'text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20' 
+                : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+            }`}
+          >
+            {autoRotate ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+          </button>
+
+          {/* Centrar Cámara */}
+          <button
+            onClick={handleResetCamera}
+            title="Centrar Cámara"
+            className="p-2 rounded-full text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all"
+          >
+            <Crosshair className="w-4 h-4" />
+          </button>
+
+          <div className="w-px h-4 bg-white/10 mx-1" />
+
+          {/* Zoom In (+) */}
+          <button
+            onClick={() => handleZoom(0.75)}
+            title="Acercar (+)"
+            className="p-2 rounded-full text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+
+          {/* Zoom Out (-) */}
+          <button
+            onClick={() => handleZoom(1.33)}
+            title="Alejar (-)"
+            className="p-2 rounded-full text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all"
+          >
+            <Minus className="w-4 h-4" />
+          </button>
+
+          <div className="w-px h-4 bg-white/10 mx-1" />
+
+          {/* Alternar Etiquetas */}
+          <button
+            onClick={() => setShowLabels(prev => !prev)}
+            title={showLabels ? "Ocultar etiquetas" : "Mostrar etiquetas"}
+            className={`p-2 rounded-full transition-all ${
+              showLabels 
+                ? 'text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20' 
+                : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+            }`}
+          >
+            <Type className="w-4 h-4" />
+          </button>
+
+          <div className="w-px h-4 bg-white/10 mx-1" />
+
+          {/* Selector sutil de Base de Datos / Benchmark */}
+          <button
+            onClick={() => handleModeChange(dataMode === 'nexus' ? 'constellation' : 'nexus')}
+            title={dataMode === 'nexus' ? "Cambiar a Benchmark 150 Nodos" : "Cambiar a BBDD Nexus"}
+            className="px-2.5 py-1 rounded-full text-[11px] font-mono font-medium text-slate-400 hover:text-cyan-300 hover:bg-white/5 transition-all flex items-center gap-1.5"
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{dataMode === 'nexus' ? 'Nexus' : '150N'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 4. PANEL LATERAL RETRÁCTIL (INSPECTOR OBSIDIAN / GRAPHIFY) */}
+      <div 
+        id="c137-node-inspector"
+        className={`fixed sm:absolute top-0 right-0 bottom-0 z-30 w-full sm:w-88 md:w-96
+                   backdrop-blur-md bg-gray-950/75 border-l border-white/10
+                   shadow-2xl flex flex-col transform transition-transform duration-300 ease-out
+                   ${selectedNode ? 'translate-x-0 pointer-events-auto' : 'translate-x-full pointer-events-none'}`}
+      >
+        {displayNode && (
+          <div className="flex flex-col h-full p-5 overflow-hidden">
+            {/* Cabecera */}
+            <div className="flex items-start justify-between pb-3 border-b border-white/10 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`p-1.5 rounded-lg border shrink-0 ${
+                  displayNode.type === 'primary' 
+                    ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400' 
+                    : 'border-violet-500/40 bg-violet-500/10 text-violet-400'
+                }`}>
+                  {displayNode.type === 'primary' ? (
+                    <FileText className="w-4 h-4" />
+                  ) : (
+                    <Tag className="w-4 h-4" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 block">
+                    {displayNode.category || (displayNode.type === 'primary' ? 'Nota' : 'Hub')} #{displayNode.id}
+                  </span>
+                  <h2 className="text-sm font-semibold text-white tracking-tight truncate">
+                    {displayNode.name}
+                  </h2>
+                </div>
+              </div>
+
+              {/* Botón Cerrar (X) que limpia la selección */}
+              <button
+                onClick={handleCloseInspector}
+                className="p-1.5 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-colors shrink-0 ml-2"
+                title="Cerrar (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Badges de Tags y Conexiones */}
+            <div className="flex items-center gap-2 my-3 shrink-0 flex-wrap">
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-mono bg-white/5 border border-white/10 text-slate-300 flex items-center gap-1">
+                <Link2 className="w-3 h-3 text-cyan-400" />
+                {displayNode.connections.length} Vínculos
+              </span>
+
+              {displayNode.tags && displayNode.tags.map((t, idx) => (
+                <span key={idx} className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-white/5 border border-white/10 text-slate-400">
+                  #{t.replace(/^#/, '')}
+                </span>
+              ))}
+            </div>
+
+            {/* Contenido Markdown / Inspector */}
+            <div className="flex-1 overflow-y-auto pr-1 space-y-4 custom-scrollbar">
+              {displayNode.content ? (
+                <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 text-xs text-slate-300 leading-relaxed font-sans">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({ children }) => <h1 className="text-sm font-semibold text-white mt-1 mb-2">{children}</h1>,
+                      h2: ({ children }) => <h2 className="text-xs font-semibold text-slate-100 mt-2 mb-1">{children}</h2>,
+                      h3: ({ children }) => <h3 className="text-xs font-medium text-slate-200 mt-1 mb-1">{children}</h3>,
+                      p: ({ children }) => <p className="text-xs text-slate-300 mb-2 leading-relaxed">{children}</p>,
+                      ul: ({ children }) => <ul className="list-disc pl-4 space-y-1 mb-2 text-slate-300">{children}</ul>,
+                      li: ({ children }) => <li className="text-xs">{children}</li>,
+                      code: ({ children }) => <code className="bg-black/50 px-1.5 py-0.5 rounded text-[11px] font-mono text-cyan-300 border border-white/10">{children}</code>,
+                      pre: ({ children }) => <pre className="bg-black/60 p-2.5 rounded-lg border border-white/10 text-[11px] font-mono overflow-x-auto my-2 text-cyan-200">{children}</pre>,
+                    }}
+                  >
+                    {displayNode.content}
+                  </ReactMarkdown>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5 text-xs font-mono space-y-2 text-slate-400">
+                  <div className="flex justify-between">
+                    <span>Posición 3D:</span>
+                    <span className="text-white">X:{displayNode.x.toFixed(1)} Y:{displayNode.y.toFixed(1)} Z:{displayNode.z.toFixed(1)}</span>
+                  </div>
+                  {displayNode.bandwidth && (
+                    <div className="flex justify-between">
+                      <span>Ancho de Banda:</span>
+                      <span className="text-white">{displayNode.bandwidth}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Nodos Conectados */}
+              <div>
+                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-2">
+                  <span>Conexiones ({displayNode.connections.length})</span>
+                  <span className="text-[10px] text-slate-500">Click para enfocar</span>
+                </div>
+                <div className="space-y-1">
+                  {displayNode.connections.map(neighborId => {
+                    const neighbor = currentGraph.nodes[neighborId];
+                    if (!neighbor) return null;
+                    return (
+                      <button
+                        key={neighborId}
+                        onClick={() => handleSelectNode(neighborId)}
+                        onMouseEnter={() => setHoveredId(neighborId)}
+                        onMouseLeave={() => setHoveredId(null)}
+                        className="w-full flex items-center justify-between p-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.06] border border-white/5 hover:border-white/10 transition-all text-left text-xs group"
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span 
+                            className="w-1.5 h-1.5 rounded-full shrink-0" 
+                            style={{ backgroundColor: neighbor.type === 'primary' ? themeCfg.primaryHex : themeCfg.relayHex }} 
+                          />
+                          <span className="truncate font-sans text-slate-300 group-hover:text-white transition-colors">
+                            {neighbor.name}
+                          </span>
+                        </div>
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all shrink-0 ml-2" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Botón de Recentrado en este nodo */}
+            <div className="pt-3 mt-auto border-t border-white/10 shrink-0">
+              <button
+                onClick={() => {
+                  if (controlsRef.current) {
+                    controlsRef.current.target.set(displayNode.x, displayNode.y, displayNode.z);
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-sans text-slate-200 hover:text-white transition-all"
+              >
+                <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Centrar Vista en este Nodo</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
