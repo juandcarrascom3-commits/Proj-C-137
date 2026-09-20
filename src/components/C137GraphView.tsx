@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
+import { useUIStore } from '../store/useUIStore';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { 
@@ -269,10 +270,9 @@ function Scene({
         maxDistance={400}
         rotateSpeed={0.7}
         panSpeed={0.6}
-        // 👇 Control de gestos multi-touch para pantallas táctiles
         touches={{
-          ONE: THREE.TOUCH.ROTATE,    // 1 dedo: rotar la escena 3D
-          TWO: THREE.TOUCH.DOLLY_PAN  // 2 dedos: pellizco (zoom) y desplazamiento
+          ONE: THREE.TOUCH.ROTATE,
+          TWO: THREE.TOUCH.DOLLY_PAN
         }}
       />
 
@@ -496,6 +496,14 @@ export function C137GraphView({
   const blurTimeoutRef = useRef<any>(null);
   const initialDeepLinkCheckedRef = useRef(false);
   const isFirstSimulationRef = useRef(true);
+
+  // ────────────────---------------------------------------------------------
+  // 1. ZONA DE LÓGICA (Extraer variables y métodos desde useUIStore)
+  // ────────────────---------------------------------------------------------
+  const visualStyle = useUIStore((state) => state.visualStyle);
+  const cycleVisualStyle = useUIStore((state) => state.cycleVisualStyle);
+  const showEdges = useUIStore((state) => state.showEdges);
+  const toggleShowEdges = useUIStore((state) => state.toggleShowEdges);
 
   const { savedPositions, saveNodePositions, setActiveNoteId, notes: storeNotes, injectTestNodes } = useNexusStore();
 
@@ -891,7 +899,6 @@ export function C137GraphView({
           dpr={[1, Math.min(typeof window !== 'undefined' ? window.devicePixelRatio : 1, 1.5)]}
           camera={{ position: [0, 8, 38], fov: 45 }}
           gl={{ antialias: false, powerPreference: 'high-performance', alpha: false }}
-          // Tolerancia de selección táctil ampliada para móviles
           raycaster={{
             params: {
               Mesh: { threshold: 0.4 },
@@ -1061,9 +1068,13 @@ export function C137GraphView({
         </div>
       </div>
 
-      {/* 3. BARRA DE HERRAMIENTAS INFERIOR (DOCK) */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* 2. ZONA DE INTERFAZ (Barra Flotante Inferior / Dock)               */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto max-w-[95vw] overflow-x-auto scrollbar-none">
         <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-gray-950/80 backdrop-blur-md border border-white/10 shadow-2xl text-slate-300">
+          
+          {/* Pausa / Activar Rotación */}
           <button
             onClick={() => setAutoRotate(prev => !prev)}
             title={autoRotate ? "Congelar movimiento" : "Fluir constelación"}
@@ -1074,6 +1085,7 @@ export function C137GraphView({
             {autoRotate ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
           </button>
 
+          {/* Centrar Cámara */}
           <button
             onClick={handleResetCamera}
             title="Centrar Cámara"
@@ -1084,6 +1096,37 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
+          {/* CONMUTADOR DINÁMICO DE ESTILO VISUAL (Neón / Categorías / Minimal) */}
+          <button
+            onClick={cycleVisualStyle}
+            title="Cambiar Estilo Visual (Neón -> Categorías -> Minimal)"
+            className="px-2.5 py-1 rounded-full text-[11px] font-mono bg-white/5 hover:bg-white/10 text-slate-300 transition-all flex items-center gap-1.5 border border-white/10"
+          >
+            <span>🎨</span>
+            <span className="capitalize hidden sm:inline">
+              {visualStyle === 'neon' && 'Neón'}
+              {visualStyle === 'category' && 'Categorías'}
+              {visualStyle === 'minimal' && 'Minimal'}
+            </span>
+          </button>
+
+          {/* ⬇️ BOTÓN DE VISIBILIDAD DE RED / CONEXIONES (INTEGRADO EN EL DOCK) */}
+          <button
+            onClick={toggleShowEdges}
+            title={showEdges ? "Ocultar Conexiones" : "Mostrar Conexiones"}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-mono transition-all flex items-center gap-1.5 border ${
+              showEdges 
+                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' 
+                : 'bg-white/5 text-slate-400 border-white/10 hover:text-slate-200'
+            }`}
+          >
+            <span>{showEdges ? '🌐' : '🚫'}</span>
+            <span className="hidden sm:inline">{showEdges ? 'Red Visible' : 'Red Oculta'}</span>
+          </button>
+
+          <div className="w-px h-4 bg-white/10 mx-1" />
+
+          {/* Zoom In / Zoom Out */}
           <button
             onClick={() => handleZoom(0.75)}
             title="Acercar (+)"
@@ -1102,6 +1145,7 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
+          {/* Conmutador de Etiquetas */}
           <button
             onClick={() => setShowLabels(prev => !prev)}
             title={showLabels ? "Ocultar etiquetas" : "Mostrar etiquetas"}
@@ -1114,6 +1158,7 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
+          {/* Web Worker de Físicas */}
           <button
             onClick={() => reheat(0.35)}
             title="Re-ejecutar física en Web Worker (60 FPS)"
@@ -1130,6 +1175,7 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
+          {/* Cambiar Fuente de Datos (Nexus / Benchmark) */}
           <button
             onClick={() => handleModeChange(dataMode === 'nexus' ? 'constellation' : 'nexus')}
             title={dataMode === 'nexus' ? "Cambiar a Benchmark 150 Nodos" : "Cambiar a BBDD Nexus"}
@@ -1141,6 +1187,7 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
+          {/* Prueba de Carga / Estrés */}
           <button
             onClick={() => {
               const currentCount = currentGraph.nodes.length;
@@ -1153,6 +1200,7 @@ export function C137GraphView({
             <Plus className="w-3.5 h-3.5 text-emerald-400" />
             <span className="hidden sm:inline">Estrés ({currentGraph.nodes.length})</span>
           </button>
+
         </div>
       </div>
 

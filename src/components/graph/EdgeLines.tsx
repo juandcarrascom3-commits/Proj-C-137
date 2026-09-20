@@ -2,6 +2,8 @@ import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { Graph3DNode, Graph3DLink, GraphTheme, THEME_CONFIG } from './types';
+import { useUIStore } from '../../store/useUIStore';
+import { getCategoryColorThree } from '../../utils/visualStyles';
 
 export interface EdgeLinesProps {
   nodes: Graph3DNode[];
@@ -52,7 +54,7 @@ const CyberPulseShader = {
     void main() {
       // Si la conexión está filtrada por categoría o búsqueda
       if (vFiltered > 0.5) {
-        gl_FragColor = vec4(vColor * 0.1, 0.08);
+        gl_FragColor = vec4(vColor * 0.1, 0.05);
         return;
       }
       
@@ -61,7 +63,6 @@ const CyberPulseShader = {
       
       if (vIsActive > 0.5) {
         // ENLACE ACTIVO (HOVER / SELECCIÓN / BÚSQUEDA)
-        // Pulso neón fluido y calibrado (intensidad máxima 1.2, sin quemado blanco)
         float speed = uPulseSpeed * 1.4;
         
         // Pulso 1: Haz luminoso primario
@@ -80,7 +81,6 @@ const CyberPulseShader = {
         finalAlpha = clamp(0.55 + totalPulse * 0.35, 0.0, 0.95);
       } else {
         // ENLACE AMBIENTAL DE FONDO
-        // Pulso suave que respeta el espacio sin saturar la escena
         float phase = fract(vProgress * 0.6 - uTime * 0.4);
         float ambientPulse = smoothstep(0.85, 1.0, phase) * 0.5;
         
@@ -105,6 +105,10 @@ export function EdgeLines({
   const geomRef = useRef<THREE.BufferGeometry>(null);
   const matRef = useRef<THREE.ShaderMaterial>(null);
   const themeCfg = THEME_CONFIG[theme];
+
+  // Consumir el estilo visual activo y el conmutador de visibilidad desde Zustand
+  const visualStyle = useUIStore((state) => state.visualStyle);
+  const showEdges = useUIStore((state) => state.showEdges);
 
   const pulseColorHex = useMemo(() => {
     return theme === 'cyberpunk' ? '#00f0ff' : theme === 'emerald' ? '#6ee7b7' : '#c084fc';
@@ -144,7 +148,9 @@ export function EdgeLines({
 
     const cPrimary = new THREE.Color(themeCfg.primaryHex);
     const cRelay = new THREE.Color(themeCfg.relayHex);
-    const hasSearch = matchingNodeIds && matchingNodeIds.size > 0;
+    const cMinimal = new THREE.Color('#334155');
+
+    const hasSearch = Boolean(matchingNodeIds && matchingNodeIds.size > 0);
 
     links.forEach((link, idx) => {
       const srcId = typeof link.source === 'object' ? (link.source as any).id : link.source;
@@ -171,8 +177,23 @@ export function EdgeLines({
       pos[pOffset + 4] = ty;
       pos[pOffset + 5] = tz;
 
-      const col1 = srcNode && srcNode.type === 'primary' ? cPrimary : cRelay;
-      const col2 = tgtNode && tgtNode.type === 'primary' ? cPrimary : cRelay;
+      // --- CÁLCULO DE COLORES DE CONEXIÓN SEGÚN VISUALSTYLE ---
+      let col1: THREE.Color;
+      let col2: THREE.Color;
+
+      if (visualStyle === 'category') {
+        const srcCat = srcNode?.category || (srcNode?.type === 'primary' ? 'General' : 'Tag Hub');
+        const tgtCat = tgtNode?.category || (tgtNode?.type === 'primary' ? 'General' : 'Tag Hub');
+        col1 = getCategoryColorThree(srcCat, srcNode?.cluster ?? srcId);
+        col2 = getCategoryColorThree(tgtCat, tgtNode?.cluster ?? tgtId);
+      } else if (visualStyle === 'minimal') {
+        col1 = cMinimal;
+        col2 = cMinimal;
+      } else {
+        // Modo 'neon'
+        col1 = srcNode && srcNode.type === 'primary' ? cPrimary : cRelay;
+        col2 = tgtNode && tgtNode.type === 'primary' ? cPrimary : cRelay;
+      }
 
       col[pOffset + 0] = Math.max(0, Math.min(1.0, col1.r));
       col[pOffset + 1] = Math.max(0, Math.min(1.0, col1.g));
@@ -188,7 +209,7 @@ export function EdgeLines({
 
       const isHovered = hoveredId !== null && (srcId === hoveredId || tgtId === hoveredId);
       const isSelected = selectedId !== null && (srcId === selectedId || tgtId === selectedId);
-      const isSearchActive = hasSearch && (matchingNodeIds.has(srcId) || matchingNodeIds.has(tgtId));
+      const isSearchActive = hasSearch && Boolean(matchingNodeIds?.has(srcId) || matchingNodeIds?.has(tgtId));
 
       const isActive = isHovered || isSelected || isSearchActive;
       act[aOffset + 0] = isActive ? 1.0 : 0.0;
@@ -202,7 +223,7 @@ export function EdgeLines({
           isFiltered = true;
         }
       }
-      if (hasSearch && !matchingNodeIds.has(srcId) && !matchingNodeIds.has(tgtId)) {
+      if (hasSearch && matchingNodeIds && !matchingNodeIds.has(srcId) && !matchingNodeIds.has(tgtId)) {
         isFiltered = true;
       }
 
@@ -217,11 +238,11 @@ export function EdgeLines({
       activeArr: act,
       filteredArr: filt
     };
-  }, [nodes, links, hoveredId, selectedId, themeCfg, activeCategory, matchingNodeIds]);
+  }, [nodes, links, hoveredId, selectedId, themeCfg, activeCategory, matchingNodeIds, visualStyle]);
 
   // Sincronizar buffers dinámicos con la geometría Three.js
   useEffect(() => {
-    if (!geomRef.current) return;
+    if (!geomRef.current || !showEdges) return;
     const geom = geomRef.current;
 
     const posAttr = geom.getAttribute('position') as THREE.BufferAttribute;
@@ -254,7 +275,7 @@ export function EdgeLines({
       filtAttr.set(filteredArr);
       filtAttr.needsUpdate = true;
     }
-  }, [positions, baseColors, progressArr, activeArr, filteredArr]);
+  }, [positions, baseColors, progressArr, activeArr, filteredArr, showEdges]);
 
   // Limpieza de memoria WebGL al desmontar
   useEffect(() => {
@@ -265,6 +286,9 @@ export function EdgeLines({
       shaderMaterial.dispose();
     };
   }, [shaderMaterial]);
+
+  // Si las conexiones están desactivadas en Zustand, no se renderizan
+  if (!showEdges) return null;
 
   return (
     <lineSegments>

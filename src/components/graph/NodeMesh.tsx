@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { Graph3DNode, GraphTheme, THEME_CONFIG } from './types';
+import { getCategoryColorThree } from '../../utils/visualStyles';
+import { useUIStore } from '../../store/useUIStore';
 
 export interface NodeMeshProps {
   nodes: Graph3DNode[];
@@ -36,7 +38,6 @@ interface FloatingNodeLabelProps {
   theme: GraphTheme;
 }
 
-
 function FloatingNodeLabel({
   node,
   isHovered,
@@ -46,7 +47,6 @@ function FloatingNodeLabel({
   theme
 }: FloatingNodeLabelProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const themeCfg = THEME_CONFIG[theme];
 
   useFrame(({ camera }) => {
     if (!groupRef.current) return;
@@ -125,6 +125,9 @@ export function NodeMesh({
   const themeCfg = THEME_CONFIG[theme];
   const { camera } = useThree();
 
+  // Consumir el modo de estilo visual activo desde Zustand ('neon' | 'category' | 'minimal')
+  const visualStyle = useUIStore((state) => state.visualStyle);
+
   // Estados de arrastre en espacio 3D
   const isDraggingRef = useRef(false);
   const dragIdRef = useRef<number | null>(null);
@@ -140,6 +143,9 @@ export function NodeMesh({
     const cPrimary = new THREE.Color(themeCfg.primaryHex);
     const cRelay = new THREE.Color(themeCfg.relayHex);
 
+    const cMinimalPrimary = new THREE.Color('#94a3b8');
+    const cMinimalRelay = new THREE.Color('#475569');
+
     return {
       neonCyan: cCyan.clone().multiplyScalar(1.2),
       neonViolet: cViolet.clone().multiplyScalar(1.15),
@@ -148,7 +154,10 @@ export function NodeMesh({
       primaryDimmed: cPrimary.clone().multiplyScalar(0.3),
 
       relayNormal: cRelay.clone().multiplyScalar(1.0),
-      relayDimmed: cRelay.clone().multiplyScalar(0.3)
+      relayDimmed: cRelay.clone().multiplyScalar(0.3),
+
+      minimalPrimary: cMinimalPrimary,
+      minimalRelay: cMinimalRelay
     };
   }, [themeCfg]);
 
@@ -175,7 +184,7 @@ export function NodeMesh({
 
     const hoveredNode = hoveredId !== null ? nodes[hoveredId] : null;
     const selectedNode = selectedId !== null ? nodes[selectedId] : null;
-    const hasSearchFilter = matchingNodeIds && matchingNodeIds.size > 0;
+    const hasSearchFilter = Boolean(matchingNodeIds && matchingNodeIds.size > 0);
 
     nodes.forEach((node, i) => {
       const nx = Number.isFinite(node.x) ? node.x : 0;
@@ -184,14 +193,27 @@ export function NodeMesh({
       dummy.position.set(nx, ny, nz);
 
       const isHoveredTarget = i === hoveredId;
-      const isHoveredNeighbor = hoveredId !== null && hoveredNode?.connections.includes(i);
+      const isHoveredNeighbor = hoveredId !== null && Boolean(hoveredNode?.connections?.includes(i));
       
       const isSelectedTarget = i === selectedId;
-      const isSelectedNeighbor = selectedId !== null && selectedNode?.connections.includes(i);
-      const isSearchMatch = hasSearchFilter && matchingNodeIds.has(i);
+      const isSelectedNeighbor = selectedId !== null && Boolean(selectedNode?.connections?.includes(i));
+      const isSearchMatch = hasSearchFilter && Boolean(matchingNodeIds?.has(i));
+
+      // --- ASIGNACIÓN DE COLOR BASE SEGÚN EL MODO VISUAL ACTIVO ---
+      let baseColor: THREE.Color;
+
+      if (visualStyle === 'category') {
+        const catName = node.category || (node.type === 'primary' ? 'General' : 'Tag Hub');
+        baseColor = getCategoryColorThree(catName, node.cluster ?? i);
+      } else if (visualStyle === 'minimal') {
+        baseColor = (node.type === 'primary' ? colors.minimalPrimary : colors.minimalRelay).clone();
+      } else {
+        // Modo 'neon' (Cyberpunk predeterminado)
+        baseColor = (node.type === 'primary' ? colors.primaryNormal : colors.relayNormal).clone();
+      }
 
       let scaleMult = 1.0;
-      let chosenColor: THREE.Color;
+      let chosenColor = baseColor.clone();
 
       if (hasSearchFilter) {
         // MODO BÚSQUEDA: Escala limitada a 1.25x con color neón cian limpio
@@ -200,7 +222,7 @@ export function NodeMesh({
           chosenColor = colors.neonCyan;
         } else {
           scaleMult = 0.5;
-          chosenColor = (node.type === 'primary' ? colors.primaryDimmed : colors.relayDimmed).clone().multiplyScalar(0.4);
+          chosenColor = chosenColor.multiplyScalar(0.2);
         }
       } else if (hoveredId !== null) {
         if (isHoveredTarget) {
@@ -211,7 +233,7 @@ export function NodeMesh({
           chosenColor = colors.neonViolet;
         } else {
           scaleMult = 0.65;
-          chosenColor = node.type === 'primary' ? colors.primaryDimmed : colors.relayDimmed;
+          chosenColor = chosenColor.multiplyScalar(0.25);
         }
       } else if (selectedId !== null) {
         if (isSelectedTarget) {
@@ -222,10 +244,17 @@ export function NodeMesh({
           chosenColor = colors.neonViolet;
         } else {
           scaleMult = 0.65;
-          chosenColor = node.type === 'primary' ? colors.primaryDimmed : colors.relayDimmed;
+          chosenColor = chosenColor.multiplyScalar(0.25);
         }
       } else {
-        chosenColor = node.type === 'primary' ? colors.primaryNormal : colors.relayNormal;
+        // Estado de reposo
+        if (visualStyle === 'neon') {
+          chosenColor.multiplyScalar(bloomBoost ? 1.4 : 1.1);
+        } else if (visualStyle === 'category') {
+          chosenColor.multiplyScalar(bloomBoost ? 1.3 : 1.0);
+        } else {
+          chosenColor.multiplyScalar(0.8);
+        }
       }
 
       // Aislamiento por categoría si aplica
@@ -233,7 +262,7 @@ export function NodeMesh({
         const nodeCat = node.category || (node.type === 'primary' ? 'Notas' : 'Hubs');
         if (nodeCat !== activeCategory) {
           scaleMult *= 0.35;
-          chosenColor = chosenColor.clone().multiplyScalar(0.2);
+          chosenColor = chosenColor.multiplyScalar(0.15);
         }
       }
 
@@ -246,7 +275,7 @@ export function NodeMesh({
 
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }, [nodes, hoveredId, selectedId, activeNeighbors, colors, activeCategory, matchingNodeIds]);
+  }, [nodes, hoveredId, selectedId, activeNeighbors, colors, activeCategory, matchingNodeIds, bloomBoost, visualStyle]);
 
   // Limpieza de recursos WebGL al desmontar
   useEffect(() => {
