@@ -269,6 +269,11 @@ function Scene({
         maxDistance={400}
         rotateSpeed={0.7}
         panSpeed={0.6}
+        // 👇 Control de gestos multi-touch para pantallas táctiles
+        touches={{
+          ONE: THREE.TOUCH.ROTATE,    // 1 dedo: rotar la escena 3D
+          TWO: THREE.TOUCH.DOLLY_PAN  // 2 dedos: pellizco (zoom) y desplazamiento
+        }}
       />
 
       <EffectComposer multisampling={0}>
@@ -886,6 +891,13 @@ export function C137GraphView({
           dpr={[1, Math.min(typeof window !== 'undefined' ? window.devicePixelRatio : 1, 1.5)]}
           camera={{ position: [0, 8, 38], fov: 45 }}
           gl={{ antialias: false, powerPreference: 'high-performance', alpha: false }}
+          // Tolerancia de selección táctil ampliada para móviles
+          raycaster={{
+            params: {
+              Mesh: { threshold: 0.4 },
+              Line: { threshold: 0.3 }
+            }
+          }}
         >
           <Scene
             nodes={currentGraph.nodes}
@@ -909,7 +921,7 @@ export function C137GraphView({
             recenterTrigger={recenterTrigger}
           />
         </Canvas>
-      </div>
+      </div> 
 
       {/* 1. LEYENDA SUPERIOR IZQUIERDA */}
       <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 pointer-events-auto max-w-[240px]">
