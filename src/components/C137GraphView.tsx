@@ -504,6 +504,8 @@ export function C137GraphView({
   const cycleVisualStyle = useUIStore((state) => state.cycleVisualStyle);
   const showEdges = useUIStore((state) => state.showEdges);
   const toggleShowEdges = useUIStore((state) => state.toggleShowEdges);
+  const topologyLayout = useUIStore((state) => state.topologyLayout);
+  const cycleTopologyLayout = useUIStore((state) => state.cycleTopologyLayout);
 
   const { savedPositions, saveNodePositions, setActiveNoteId, notes: storeNotes, injectTestNodes } = useNexusStore();
 
@@ -850,25 +852,19 @@ export function C137GraphView({
     return set;
   }, [searchTerm, currentGraph.nodes, storeNotes]);
 
+  // OPTIMIZACIÓN: Reutiliza `matchingNodeIds` para evitar filtrado duplicado de la base de datos
   const searchResults = useMemo(() => {
-    if (!searchTerm.trim()) return [];
-    const q = searchTerm.toLowerCase();
-    
-    const contentMap = new Map<string, string>();
-    storeNotes.forEach(note => {
-      if (note.content) contentMap.set(note.id, note.content.toLowerCase());
-    });
-
-    return currentGraph.nodes
-      .filter((n) => {
-        const content = n.slug ? contentMap.get(n.slug) : undefined;
-        return n.name.toLowerCase().includes(q) ||
-        (n.category && n.category.toLowerCase().includes(q)) ||
-        (n.tags && n.tags.some((t) => t.toLowerCase().includes(q))) ||
-        (content && content.includes(q));
-      })
-      .slice(0, 8);
-  }, [searchTerm, currentGraph, storeNotes]);
+    if (!searchTerm.trim() || matchingNodeIds.size === 0) return [];
+    const results: Graph3DNode[] = [];
+    for (const idx of matchingNodeIds) {
+      const node = currentGraph.nodes[idx];
+      if (node) {
+        results.push(node);
+        if (results.length >= 8) break;
+      }
+    }
+    return results;
+  }, [searchTerm, matchingNodeIds, currentGraph.nodes]);
 
   useEffect(() => {
     const handleSlashKey = (e: KeyboardEvent) => {
@@ -1110,7 +1106,7 @@ export function C137GraphView({
             </span>
           </button>
 
-          {/* ⬇️ BOTÓN DE VISIBILIDAD DE RED / CONEXIONES (INTEGRADO EN EL DOCK) */}
+          {/* BOTÓN DE VISIBILIDAD DE RED / CONEXIONES */}
           <button
             onClick={toggleShowEdges}
             title={showEdges ? "Ocultar Conexiones" : "Mostrar Conexiones"}
@@ -1122,6 +1118,23 @@ export function C137GraphView({
           >
             <span>{showEdges ? '🌐' : '🚫'}</span>
             <span className="hidden sm:inline">{showEdges ? 'Red Visible' : 'Red Oculta'}</span>
+          </button>
+
+          {/* CONMUTADOR DE TOPOLOGÍA / LAYOUT */}
+          <button
+            onClick={() => {
+              cycleTopologyLayout();
+              reheat(0.5);
+            }}
+            title="Cambiar Disposición Topológica de la Red (Orgánica -> Esférica -> Cúmulos)"
+            className="px-2.5 py-1 rounded-full text-[11px] font-mono bg-white/5 hover:bg-white/10 text-slate-300 transition-all flex items-center gap-1.5 border border-white/10"
+          >
+            <span>🧩</span>
+            <span className="capitalize hidden sm:inline">
+              {topologyLayout === 'organic' && 'Orgánica'}
+              {topologyLayout === 'spherical' && 'Esférica'}
+              {topologyLayout === 'clustered' && 'Cúmulos'}
+            </span>
           </button>
 
           <div className="w-px h-4 bg-white/10 mx-1" />
