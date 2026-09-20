@@ -25,16 +25,14 @@ export function CameraController({
   const desiredCamPos = useRef(new THREE.Vector3(0, 8, 38));
   const desiredTarget = useRef(new THREE.Vector3(0, 0, 0));
 
-  // Bandera de animación y control de tiempo para animar ÚNICAMENTE UNA VEZ
   const isAnimatingRef = useRef(false);
   const animStartTimeRef = useRef(0);
   const lastSelectedIdRef = useRef<number | null>(null);
   const lastRecenterTriggerRef = useRef(recenterTrigger);
 
-  // 1. Activar animación UNA VEZ al cambiar selectedId
+  // 1. Activar animación al seleccionar un nodo manteniendo la perspectiva actual
   useEffect(() => {
-    if (selectedId !== null && nodes[selectedId]) {
-      // Solo iniciar si realmente cambió el id seleccionado o se abrió/cerró el inspector
+    if (selectedId !== null && nodes[selectedId] && controlsRef.current) {
       if (selectedId !== lastSelectedIdRef.current) {
         lastSelectedIdRef.current = selectedId;
       }
@@ -50,24 +48,28 @@ export function CameraController({
 
       if (inspectorOpen) {
         if (!isMobile) {
-          targetX = nx + 7;
+          targetX = nx + 6;
         } else {
-          targetY = ny + 5;
+          targetY = ny + 4;
         }
       }
 
-      const calcDist = 26;
+      // FIX BUG 4 & 5: Obtener la dirección actual de la cámara para no girar 180° bruscos
+      const currentOffset = camera.position.clone().sub(controlsRef.current.target);
+      if (currentOffset.length() < 1) currentOffset.set(0, 6, 24);
+      else currentOffset.normalize().multiplyScalar(24); // Mantener distancia constante de 24 unidades
+
       desiredTarget.current.set(targetX, targetY, nz);
-      desiredCamPos.current.set(targetX, targetY, nz + calcDist);
+      desiredCamPos.current.copy(desiredTarget.current).add(currentOffset);
 
       isAnimatingRef.current = true;
       animStartTimeRef.current = performance.now();
     } else {
       lastSelectedIdRef.current = null;
     }
-  }, [selectedId, nodes, inspectorOpen]);
+  }, [selectedId, nodes, inspectorOpen, camera, controlsRef]);
 
-  // 2. Activar animación UNA VEZ al pulsar "Centrar Vista"
+  // 2. Activar animación al pulsar "Centrar Vista"
   useEffect(() => {
     if (recenterTrigger > 0 && recenterTrigger !== lastRecenterTriggerRef.current) {
       lastRecenterTriggerRef.current = recenterTrigger;
@@ -81,11 +83,11 @@ export function CameraController({
   useFrame(() => {
     if (!controlsRef.current) return;
 
-    // Si la animación está activa: transición suave (.lerp)
     if (isAnimatingRef.current) {
       const elapsed = performance.now() - animStartTimeRef.current;
-      const LERP = 0.075;
+      const LERP = 0.085;
 
+      // PIVOTE REAL (BUG 5): Lerpear el target de OrbitControls al centro del nodo
       controlsRef.current.target.lerp(desiredTarget.current, LERP);
       camera.position.lerp(desiredCamPos.current, LERP);
       controlsRef.current.update();
@@ -93,24 +95,20 @@ export function CameraController({
       const distTarget = controlsRef.current.target.distanceTo(desiredTarget.current);
       const distCam = camera.position.distanceTo(desiredCamPos.current);
 
-      // Una vez alcanzado el objetivo o expirado el tiempo máximo (1.2s), DETENER animación
-      if ((distTarget < 0.15 && distCam < 0.25) || elapsed > 1200) {
+      if ((distTarget < 0.1 && distCam < 0.2) || elapsed > 1200) {
         controlsRef.current.target.copy(desiredTarget.current);
         controlsRef.current.update();
-        isAnimatingRef.current = false; // LIBERA OrbitControls completamente
+        isAnimatingRef.current = false; // Liberar OrbitControls para rotación manual
       }
     }
-    // NOTA: Cuando isAnimatingRef.current es false, NO actualizamos controls.target ni camera.position.
-    // Esto permite que el usuario orbite, rote, desplace y haga zoom out libremente.
 
-    // 3. DoF dinámico con límites numéricos seguros contra NaN / Infinity
+    // DoF seguro
     if (dofRef?.current && selectedId !== null) {
       try {
         const realDist = camera.position.distanceTo(controlsRef.current.target);
         const safeDist = Math.max(0.1, Number.isFinite(realDist) ? realDist : 25);
         const farPlane = Math.max(1, (camera as THREE.PerspectiveCamera).far || 1000);
         const rawFocus = safeDist / farPlane;
-        // Limitar dentro de un rango seguro (mínimo 0.1)
         const safeFocusDistance = Math.max(0.1, Number.isFinite(rawFocus) ? Math.min(1.0, rawFocus) : 0.1);
 
         const coc = dofRef.current.circleOfConfusionMaterial;
@@ -126,3 +124,4 @@ export function CameraController({
   return null;
 }
 
+export default CameraController;

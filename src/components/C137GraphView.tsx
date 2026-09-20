@@ -1,9 +1,8 @@
 import React, { useMemo, useRef, useState, useEffect, useCallback } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Stars, Html } from '@react-three/drei';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { OrbitControls, Stars } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import ReactMarkdown from 'react-markdown';
 import { 
   forceSimulation, 
   forceManyBody, 
@@ -19,10 +18,6 @@ import {
   Type,
   Search,
   X,
-  FileText,
-  Tag,
-  Link2,
-  ArrowRight,
   Database,
   Filter,
   Cpu
@@ -33,7 +28,6 @@ import {
   extractWikiLinks, 
   extractInlineTags,
 } from '../utils/graphParser';
-
 
 import { 
   GraphTheme, 
@@ -50,8 +44,6 @@ import { InspectorPanel } from './graph/InspectorPanel';
 import { useForceWorker } from './graph/useForceWorker';
 import { useNexusStore, NodeSpatialCoord } from '../store/useNexusStore';
 
-// GraphTheme y THEME_CONFIG están definidos en ./graph/types.ts y se importan arriba.
-// Se re-exporta GraphTheme para que los consumidores externos del componente puedan usarlo.
 export type { GraphTheme };
 
 export interface C137GraphViewProps {
@@ -148,10 +140,6 @@ function buildConstellationBenchmark() {
 
   return { nodes: rawNodes, links: rawLinks };
 }
-
-// -----------------------------------------------------------------------
-// 1. NODOS INSTANCIADOS CON RENDERIZADO FLUIDO Y COMPATIBILIDAD
-// Components extracted
 
 interface SceneProps {
   nodes: Graph3DNode[];
@@ -295,9 +283,6 @@ function Scene({
   );
 }
 
-// -----------------------------------------------------------------------
-// 5. HELPER DE DEEP LINKING Y NAVEGACIÓN
-// -----------------------------------------------------------------------
 function updateUrlNote(slugOrName: string | null) {
   if (typeof window === 'undefined') return;
   try {
@@ -309,7 +294,7 @@ function updateUrlNote(slugOrName: string | null) {
     }
     window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
   } catch {
-    // Fail-safe silencioso
+    // Fail-safe
   }
 }
 
@@ -323,7 +308,6 @@ function buildIncrementalNexusGraph(
 
   const prevMap = new Map<string, { x: number; y: number; z: number; vx?: number; vy?: number; vz?: number }>();
 
-  // 1. Cargar coordenadas guardadas en el store de Zustand
   if (savedPositions) {
     Object.entries(savedPositions).forEach(([slug, pos]) => {
       if (Number.isFinite(pos.x) && Number.isFinite(pos.y) && Number.isFinite(pos.z)) {
@@ -332,7 +316,6 @@ function buildIncrementalNexusGraph(
     });
   }
 
-  // 2. Sobrescribir con coordenadas del grafo actual si existen y son válidas
   if (prevNodes && prevNodes.length > 0) {
     prevNodes.forEach((n) => {
       if (Number.isFinite(n.x) && Number.isFinite(n.y) && Number.isFinite(n.z)) {
@@ -352,7 +335,6 @@ function buildIncrementalNexusGraph(
     let vx: number | undefined, vy: number | undefined, vz: number | undefined;
 
     if (prev && Number.isFinite(prev.x)) {
-      // PRESERVACIÓN TOPOLÓGICA: Mantener estrictamente las coordenadas calculadas
       x = prev.x;
       y = prev.y;
       z = prev.z;
@@ -360,7 +342,6 @@ function buildIncrementalNexusGraph(
       vy = prev.vy;
       vz = prev.vz;
     } else {
-      // Si es un nodo nuevo, lo posicionamos suavemente cerca del centro o de su clúster
       const angle = (idx / Math.max(notes.length, 1)) * Math.PI * 2;
       const rad = 7 + (idx % 5) * 2.2;
       x = Math.cos(angle) * rad + (Math.random() - 0.5) * 2.5;
@@ -487,9 +468,6 @@ function buildIncrementalNexusGraph(
   return { nodes, links };
 }
 
-// -----------------------------------------------------------------------
-// 6. COMPONENTE PRINCIPAL
-// -----------------------------------------------------------------------
 export function C137GraphView({
   notes,
   activeNoteId,
@@ -514,7 +492,6 @@ export function C137GraphView({
   const initialDeepLinkCheckedRef = useRef(false);
   const isFirstSimulationRef = useRef(true);
 
-  // Integración con el store de Zustand para preservación topológica
   const { savedPositions, saveNodePositions, setActiveNoteId, notes: storeNotes, injectTestNodes } = useNexusStore();
 
   useEffect(() => {
@@ -527,7 +504,6 @@ export function C137GraphView({
 
   const currentGraph = dataMode === 'nexus' ? nexusGraph : constellationGraph;
 
-  // 1. Web Worker de Físicas: Receptor de posiciones por tick (Float32Array a 60 FPS)
   const handleWorkerPositionsUpdate = useCallback((positions: Float32Array) => {
     setNexusGraph((prev) => {
       const updatedNodes = [...prev.nodes];
@@ -555,7 +531,6 @@ export function C137GraphView({
     });
   }, []);
 
-  // 2. Web Worker de Físicas: Al estabilizarse la simulación, persistir en Zustand
   const handleWorkerSimulationEnd = useCallback((positions: Float32Array) => {
     const posMap: Record<string, { x: number; y: number; z: number }> = {};
     setNexusGraph((prev) => {
@@ -576,15 +551,12 @@ export function C137GraphView({
     saveNodePositions(posMap);
   }, [saveNodePositions]);
 
-  // Hook del Web Worker para cómputo desacoplado de d3-force-3d
   const {
     dispatchSimulation,
     reheat,
     stop: stopWorkerSimulation,
     pinNode,
-    unpinNode,
-    isSimulating,
-    alpha: workerAlpha
+    isSimulating
   } = useForceWorker({
     onPositionsUpdate: handleWorkerPositionsUpdate,
     onSimulationEnd: handleWorkerSimulationEnd
@@ -602,10 +574,8 @@ export function C137GraphView({
   }, []);
 
   const handleNodePin = useCallback((id: number, pos: { x: number; y: number; z: number }) => {
-    // 1. Enviar fijación 3D al Web Worker (establece fx, fy, fz y reactiva alpha suave)
     pinNode(id, pos);
 
-    // 2. Persistir en Zustand de manera incremental
     const node = currentGraph.nodes[id];
     if (node && node.slug) {
       saveNodePositions({
@@ -613,7 +583,6 @@ export function C137GraphView({
       });
     }
 
-    // 3. Actualizar coordenadas locales
     setNexusGraph((prev) => {
       const nodes = [...prev.nodes];
       if (nodes[id]) {
@@ -624,7 +593,6 @@ export function C137GraphView({
     });
   }, [pinNode, currentGraph.nodes, saveNodePositions]);
 
-  // 3. Orquestador de Topología: Preserva coordenadas previas y delega al Worker
   useEffect(() => {
     if (dataMode !== 'nexus') return;
 
@@ -640,7 +608,6 @@ export function C137GraphView({
     const isUpdate = !isFirstSimulationRef.current;
     isFirstSimulationRef.current = false;
 
-    // Despacho asíncrono al Web Worker fuera del hilo principal
     dispatchSimulation(newNodes, newLinks, isUpdate);
   }, [sourceNotes, dataMode, dispatchSimulation]);
 
@@ -737,7 +704,6 @@ export function C137GraphView({
     if (node) {
       updateUrlNote(node.slug || node.name);
       if (onNoteSelect) onNoteSelect(node.slug || node.name);
-      // Sincronización bi-direccional con el store global Zustand
       if (node.type === 'primary' && node.slug) {
         setActiveNoteId(node.slug);
       }
@@ -773,7 +739,7 @@ export function C137GraphView({
     setHoveredId(null);
     setActiveCategory(null);
     updateUrlNote(null);
-    setActiveNoteId(''); // Sync with Zustand
+    setActiveNoteId('');
     if (onNoteSelect) onNoteSelect('');
     setRecenterTrigger(prev => prev + 1);
   };
@@ -781,7 +747,7 @@ export function C137GraphView({
   const handleCloseInspector = () => {
     setSelectedId(null);
     updateUrlNote(null);
-    setActiveNoteId(''); // Sync with Zustand
+    setActiveNoteId('');
     if (onNoteSelect) onNoteSelect('');
   };
 
@@ -791,7 +757,7 @@ export function C137GraphView({
         setSelectedId(null);
         setSearchTerm('');
         updateUrlNote(null);
-        setActiveNoteId(''); // Sync with Zustand
+        setActiveNoteId('');
         if (onNoteSelect) onNoteSelect('');
       }
     };
@@ -836,7 +802,6 @@ export function C137GraphView({
       setActiveCategory(null);
     } else {
       setActiveCategory(catName);
-      // Enfocar automáticamente el primer nodo de la categoría para mejor UX
       const firstInCat = currentGraph.nodes.find(
         (n) => (n.category === catName) || (!n.category && (catName === 'Notas' || catName === 'Hubs'))
       );
@@ -853,7 +818,6 @@ export function C137GraphView({
     const q = searchTerm.toLowerCase();
     const set = new Set<number>();
     
-    // Crear un mapa rápido de contenido para búsqueda O(1)
     const contentMap = new Map<string, string>();
     storeNotes.forEach(note => {
       if (note.content) contentMap.set(note.id, note.content.toLowerCase());
@@ -893,7 +857,6 @@ export function C137GraphView({
       .slice(0, 8);
   }, [searchTerm, currentGraph, storeNotes]);
 
-  // Atajo global de teclado: Presionar '/' para enfocar el buscador rápido
   useEffect(() => {
     const handleSlashKey = (e: KeyboardEvent) => {
       if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
@@ -908,7 +871,7 @@ export function C137GraphView({
   const themeCfg = THEME_CONFIG[currentTheme];
 
   return (
-    <div id="c137-view" className="relative w-full h-screen overflow-hidden select-none font-sans text-slate-100" style={{ backgroundColor: themeCfg.bg }}>
+    <div id="c137-view" className="relative w-full h-full overflow-hidden select-none font-sans text-slate-100" style={{ backgroundColor: themeCfg.bg }}>
       
       {/* CANVAS WEBGL 3D */}
       <div 
@@ -948,7 +911,7 @@ export function C137GraphView({
         </Canvas>
       </div>
 
-      {/* 1. LEYENDA SUPERIOR IZQUIERDA (FILTRO POR CATEGORÍAS) */}
+      {/* 1. LEYENDA SUPERIOR IZQUIERDA */}
       <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 pointer-events-auto max-w-[240px]">
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-950/70 backdrop-blur-md border border-white/10 shadow-lg w-fit">
           <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_#00f0ff] animate-pulse" />
@@ -992,7 +955,7 @@ export function C137GraphView({
         </div>
       </div>
 
-      {/* 2. BUSCADOR RÁPIDO FLOTANTE EN CANVAS 3D (BLOOM BOOST EN TIEMPO REAL) */}
+      {/* 2. BUSCADOR RÁPIDO FLOTANTE */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 pointer-events-auto w-full max-w-sm px-4">
         <div className="relative">
           <div className="relative flex items-center">
@@ -1055,7 +1018,6 @@ export function C137GraphView({
             </div>
           </div>
 
-          {/* Menú flotante de resultados rápidos */}
           {isSearchFocused && searchResults.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-2 max-h-64 overflow-y-auto rounded-2xl bg-gray-950/95 backdrop-blur-xl border border-white/15 shadow-2xl p-1.5 space-y-1 z-30">
               <div className="flex items-center justify-between px-2 py-1 text-[10px] font-mono text-slate-400 border-b border-white/5">
@@ -1088,8 +1050,8 @@ export function C137GraphView({
       </div>
 
       {/* 3. BARRA DE HERRAMIENTAS INFERIOR (DOCK) */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-        <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-gray-950/70 backdrop-blur-md border border-white/10 shadow-2xl text-slate-300">
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto max-w-[95vw] overflow-x-auto scrollbar-none">
+        <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-gray-950/80 backdrop-blur-md border border-white/10 shadow-2xl text-slate-300">
           <button
             onClick={() => setAutoRotate(prev => !prev)}
             title={autoRotate ? "Congelar movimiento" : "Fluir constelación"}
@@ -1140,7 +1102,6 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
-          {/* Botón de re-estabilización física con Web Worker */}
           <button
             onClick={() => reheat(0.35)}
             title="Re-ejecutar física en Web Worker (60 FPS)"
@@ -1167,21 +1128,23 @@ export function C137GraphView({
           </button>
 
           <div className="w-px h-4 bg-white/10 mx-1" />
-          
-          {import.meta.env.DEV && (
-            <button
-              onClick={() => injectTestNodes(100)}
-              title="Inyectar Nodos +100 (Dev Only)"
-              className="px-2.5 py-1 rounded-full text-[11px] font-mono text-slate-400 hover:text-emerald-300 hover:bg-white/5 transition-all flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Inyectar +100</span>
-            </button>
-          )}
+
+          <button
+            onClick={() => {
+              const currentCount = currentGraph.nodes.length;
+              const nextAmount = currentCount >= 300 ? 500 : currentCount >= 100 ? 300 : 100;
+              injectTestNodes(nextAmount);
+            }}
+            title="Prueba de Carga / Estrés de Nodos"
+            className="px-2.5 py-1 rounded-full text-[11px] font-mono text-slate-400 hover:text-emerald-300 hover:bg-white/5 transition-all flex items-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">Estrés ({currentGraph.nodes.length})</span>
+          </button>
         </div>
       </div>
 
-      {/* 4. PANEL INSPECTOR DE NOTAS MODULAR BI-DIRECCIONAL */}
+      {/* 4. PANEL INSPECTOR DE NOTAS */}
       <InspectorPanel
         selectedNode={selectedNode}
         displayNode={displayNode}

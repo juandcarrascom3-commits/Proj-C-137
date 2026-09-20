@@ -1,34 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense } from 'react';
 import { NexusGraphTab } from '@/components/NexusGraphTab';
 import { useNexusStore } from '@/store/useNexusStore';
 import { useUIStore } from '@/store/useUIStore';
 import { 
   Network, 
-  FileText, 
-  Hash, 
   Search, 
   Plus, 
   Sparkles, 
   Code2, 
   PanelLeftClose, 
   PanelLeftOpen, 
-  ExternalLink,
-  ChevronRight,
-  Database,
-  Layers,
-  CheckCircle2,
-  Copy,
-  Check,
-  Edit2,
-  Trash2
+  Copy, 
+  Check, 
+  Edit2, 
+  Trash2 
 } from 'lucide-react';
+
+const C137GraphView = React.lazy(() => import('@/components/C137GraphView'));
 
 /**
  * =======================================================================
  * NEXUS WORKSPACE DEMO CON PESTAÑA <NexusGraphTab />
  * =======================================================================
- * Demuestra la integración real con Zustand (useNexusStore) y el componente
- * desacoplado <C137GraphView /> en modo pestaña incrustada (standalone={false}).
+ * Integración desacoplada entre datos (useNexusStore) y estado de UI (useUIStore).
+ * =======================================================================
  */
 export default function App() {
   const [viewMode, setViewMode] = useState<'nexus_tab' | 'standalone_demo'>('nexus_tab');
@@ -36,7 +31,7 @@ export default function App() {
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
-// 1. Datos del Grafo y Operaciones CRUD
+  // 1. Datos del Grafo y Operaciones CRUD (Store de Datos)
   const { 
     notes, 
     addNote, 
@@ -45,7 +40,7 @@ export default function App() {
     getNoteById 
   } = useNexusStore();
 
-  // 2. Estado de Interfaz, Búsqueda y Filtros
+  // 2. Estado de Interfaz, Búsqueda y Filtros (Store de UI desacoplado)
   const { 
     activeNoteId, 
     setActiveNoteId, 
@@ -55,10 +50,10 @@ export default function App() {
     setSearchQuery
   } = useUIStore();
 
-  // Obtener la nota activa usando el helper de datos
+  // Nota activa seleccionada
   const activeNote = activeNoteId ? getNoteById(activeNoteId) : undefined;
 
-  // Filtrado de notas para el panel lateral de NEXUS
+  // Filtrado de notas para el panel lateral
   const filteredNotes = notes.filter((note) => {
     const matchesSearch = searchQuery === '' || 
       note.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -68,7 +63,7 @@ export default function App() {
     return matchesSearch && matchesTag;
   });
 
-  // Extraer tags únicos para filtros rápidos
+  // Extraer etiquetas únicas
   const allTags = Array.from(
     new Set(notes.flatMap((n) => n.tags))
   );
@@ -89,11 +84,13 @@ export default function App() {
 
   const sampleSnippet = `import React, { Suspense } from 'react';
 import { useNexusStore } from '@/store/useNexusStore';
+import { useUIStore } from '@/store/useUIStore';
 
 const C137GraphView = React.lazy(() => import('@/components/C137GraphView'));
 
 export const NexusGraphTab = () => {
-  const { notes, activeNoteId, setActiveNoteId } = useNexusStore();
+  const { notes } = useNexusStore();
+  const { activeNoteId, setActiveNoteId } = useUIStore();
 
   return (
     <div className="w-full h-full relative overflow-hidden">
@@ -119,7 +116,7 @@ export const NexusGraphTab = () => {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
       
-      {/* BARRA SUPERIOR DE APLICACIÓN NEXUS */}
+      {/* BARRA SUPERIOR DE APLICACIÓN */}
       <header className="h-14 bg-slate-950/90 border-b border-slate-800/80 px-4 flex items-center justify-between z-30 shrink-0 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <button
@@ -140,7 +137,7 @@ export const NexusGraphTab = () => {
 
           <div className="h-4 w-px bg-slate-800 mx-1 hidden sm:block" />
 
-          {/* Selector de Modos de Visualización */}
+          {/* Selector de Modo de Visualización */}
           <div className="flex items-center bg-slate-900/80 p-0.5 rounded-lg border border-slate-800 text-xs">
             <button
               onClick={() => setViewMode('nexus_tab')}
@@ -167,7 +164,7 @@ export const NexusGraphTab = () => {
           </div>
         </div>
 
-        {/* Acciones Rápidas del Encabezado */}
+        {/* Acciones Rápidas */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowCodeModal(true)}
@@ -191,7 +188,7 @@ export const NexusGraphTab = () => {
       {/* CUERPO PRINCIPAL */}
       <div className="flex-1 relative flex overflow-hidden">
         
-        {/* PANEL LATERAL: EXPLORADOR DE NOTAS NEXUS */}
+        {/* PANEL LATERAL: EXPLORADOR DE NOTAS */}
         {sidebarOpen && (
           <aside className="w-80 md:w-88 bg-slate-950/95 border-r border-slate-800/80 flex flex-col z-20 shrink-0 backdrop-blur-xl transition-all duration-300">
             
@@ -286,7 +283,7 @@ export const NexusGraphTab = () => {
               )}
             </div>
 
-            {/* Panel de Nota Activa Detalle con controles bi-direccionales */}
+            {/* Panel de Detalle de Nota Activa */}
             {activeNote && (
               <div className="p-3.5 border-t border-slate-800 bg-slate-950/80 shrink-0 space-y-2">
                 <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
@@ -304,7 +301,7 @@ export const NexusGraphTab = () => {
                       }
                     }}
                     className="flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300 hover:text-white transition-colors"
-                    title="Editar título (preserva topología 3D)"
+                    title="Editar título"
                   >
                     <Edit2 className="w-3 h-3 text-cyan-400" />
                     <span>Editar</span>
@@ -317,52 +314,44 @@ export const NexusGraphTab = () => {
                       }
                     }}
                     className="flex items-center justify-center gap-1 py-1 px-2 rounded bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 text-[10px] font-mono text-red-400 hover:text-red-300 transition-colors"
-                    title="Eliminar nota (preserva coordenadas de las restantes)"
+                    title="Eliminar nota"
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>
-                </div>
-
-                <div className="flex items-center justify-between text-[9px] font-mono text-slate-500 pt-0.5">
-                  <span>Cámara 3D activa</span>
-                  <div className="flex items-center gap-1 text-emerald-400">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                    <span>Preservación OK</span>
-                  </div>
                 </div>
               </div>
             )}
           </aside>
         )}
 
-        {/* ÁREA CENTRAL: VISTA DE RED */}
+        {/* ÁREA CENTRAL: VISTA DE RED DE GRAFO */}
         <main className="flex-1 relative h-full w-full overflow-hidden bg-slate-950">
           {viewMode === 'nexus_tab' ? (
-            // PESTAÑA PRINCIPAL SOLICITADA POR EL USUARIO
             <NexusGraphTab />
           ) : (
-            // VISTA STANDALONE CON HUD COMPLETO
-            <C137GraphView
-              notes={notes}
-              activeNoteId={activeNoteId}
-              onNoteSelect={(id) => setActiveNoteId(id)}
-              theme="cyberpunk"
-              standalone={true}
-            />
+            <div className="w-full h-full relative overflow-hidden">
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center text-cyan-400 font-mono text-sm gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+                    <span>Inicializando Visor Standalone...</span>
+                  </div>
+                }
+              >
+                <C137GraphView
+                  notes={notes}
+                  activeNoteId={activeNoteId}
+                  onNoteSelect={(id) => setActiveNoteId(id)}
+                  theme="cyberpunk"
+                  standalone={true}
+                />
+              </Suspense>
+            </div>
           )}
-
-          {/* Mini-badge informativo de sincronización */}
-          <div className="absolute top-4 left-4 z-10 pointer-events-none hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800/80 backdrop-blur-md text-[11px] font-mono text-slate-300 shadow-xl">
-            <Database className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Zustand Store:</span>
-            <span className="text-cyan-300 font-bold">{activeNoteId}</span>
-            <span className="text-slate-600">|</span>
-            <span className="text-slate-400">{notes.length} notas en memoria</span>
-          </div>
         </main>
       </div>
 
-      {/* MODAL CON EL SNIPPET DE INTEGRACIÓN SOLICITADO */}
+      {/* MODAL DE CÓDIGO */}
       {showCodeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="w-full max-w-2xl bg-slate-900 border border-cyan-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
