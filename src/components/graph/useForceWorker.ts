@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Graph3DNode, Graph3DLink } from './types';
+import { useUIStore } from '../../store/useUIStore';
 
 export interface ForceWorkerState {
   isSimulating: boolean;
@@ -22,6 +23,9 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
   const rafIdRef = useRef<number | null>(null);
   const pendingBufferRef = useRef<Float32Array | null>(null);
   const lastProcessedBufferRef = useRef<Float32Array | null>(null);
+
+  // Escuchar la topología activa desde Zustand
+  const topologyLayout = useUIStore((state) => state.topologyLayout);
 
   const [state, setState] = useState<ForceWorkerState>({
     isSimulating: false,
@@ -70,7 +74,7 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
               if (pendingBufferRef.current) {
                 callbacksRef.current.onPositionsUpdate(pendingBufferRef.current);
                 
-                // Return the PREVIOUS buffer to worker to avoid GC, keeping the current one alive for React's async update
+                // Return the PREVIOUS buffer to worker to avoid GC
                 if (workerRef.current && lastProcessedBufferRef.current && lastProcessedBufferRef.current.buffer.byteLength > 0) {
                   workerRef.current.postMessage(
                     { type: 'RECYCLE_BUFFER', buffer: lastProcessedBufferRef.current },
@@ -125,6 +129,17 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
     };
   }, []);
 
+  // Sincronizar cambios de topología con el Web Worker activo
+  useEffect(() => {
+    if (workerRef.current) {
+      workerRef.current.postMessage({
+        type: 'SET_LAYOUT',
+        layout: topologyLayout
+      });
+      setState(prev => ({ ...prev, isSimulating: true }));
+    }
+  }, [topologyLayout]);
+
   /**
    * Envía la topología al Worker.
    * isUpdate=true utiliza un alpha suave (0.35) y menor warmup para conservar la constelación.
@@ -145,12 +160,15 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
       type: l.type
     }));
 
+    const currentLayout = useUIStore.getState().topologyLayout;
+
     workerRef.current.postMessage({
       type: isUpdate ? 'UPDATE' : 'INIT',
       nodes: nodes.map(n => ({
         id: n.id,
         slug: n.slug,
         type: n.type,
+        cluster: n.cluster, // Necesario para la distribución en cúmulos
         x: n.x,
         y: n.y,
         z: n.z,
@@ -161,7 +179,8 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
       links: normalizedLinks,
       options: {
         alpha: isUpdate ? 0.35 : 1.0,
-        warmupTicks: isUpdate ? 15 : 45
+        warmupTicks: isUpdate ? 15 : 45,
+        layout: currentLayout
       }
     });
 

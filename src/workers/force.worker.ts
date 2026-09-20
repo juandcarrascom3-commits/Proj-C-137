@@ -2,12 +2,16 @@ import {
   forceSimulation, 
   forceManyBody, 
   forceLink, 
-  forceCenter 
+  forceCenter,
+  forceRadial,
+  forceX,
+  forceY,
+  forceZ
 } from 'd3-force-3d';
 
 /**
  * =======================================================================
- * WEB WORKER DE FÍSICAS 3D (d3-force-3d Offloading)
+ * WEB WORKER DE FÍSICAS 3D (d3-force-3d Offloading + Topologías)
  * =======================================================================
  * Ejecuta la simulación de fuerzas espaciales fuera del hilo principal de UI.
  * Envía exclusivamente buffers Float32Array transferibles ([x, y, z] por nodo)
@@ -18,6 +22,7 @@ export interface WorkerNode {
   id: number;
   slug: string;
   type?: 'primary' | 'relay';
+  cluster?: number;
   x: number;
   y: number;
   z: number;
@@ -37,6 +42,8 @@ export interface WorkerLink {
   type?: 'wikilink' | 'tag';
 }
 
+export type TopologyLayoutMode = 'organic' | 'spherical' | 'clustered';
+
 export interface WorkerInitPayload {
   type: 'INIT' | 'UPDATE';
   nodes: WorkerNode[];
@@ -48,7 +55,13 @@ export interface WorkerInitPayload {
     warmupTicks?: number;
     chargeStrength?: number;
     centerStrength?: number;
+    layout?: TopologyLayoutMode;
   };
+}
+
+export interface WorkerSetLayoutPayload {
+  type: 'SET_LAYOUT';
+  layout: TopologyLayoutMode;
 }
 
 export interface WorkerReheatPayload {
@@ -80,6 +93,7 @@ export interface WorkerRecyclePayload {
 
 export type WorkerInMessage = 
   | WorkerInitPayload 
+  | WorkerSetLayoutPayload
   | WorkerReheatPayload 
   | WorkerStopPayload 
   | WorkerPinPayload 
@@ -91,10 +105,22 @@ const ctx: any = self;
 
 let simulation: any = null;
 let currentNodes: WorkerNode[] = [];
+let currentWorkerLinks: WorkerLink[] = [];
+let currentLayout: TopologyLayoutMode = 'organic';
 let isRunning = false;
 let tickTimer: any = null;
 
 let recycledBuffers: Float32Array[] = [];
+
+// Centroides precalculados para la Topología de Cúmulos (Galaxias 3D)
+const CLUSTER_CENTERS = [
+  [0, 0, 0],
+  [-22, 14, -12],
+  [22, -12, 14],
+  [-14, -18, 16],
+  [16, 20, -14],
+  [0, 22, 18]
+];
 
 function stopCurrentSimulation() {
   isRunning = false;
@@ -104,6 +130,92 @@ function stopCurrentSimulation() {
   }
   if (simulation) {
     simulation.stop();
+  }
+}
+
+/**
+ * Aplica las fuerzas espaciales correspondientes según la topología activa
+ */
+function applyLayoutForces(layout: TopologyLayoutMode) {
+  if (!simulation) return;
+
+  if (layout === 'spherical') {
+    // TOPOLOGÍA ESFÉRICA: Atractor hacia un cascarón esférico uniforme
+    simulation
+      .force(
+        'charge',
+        forceManyBody().strength(-35).distanceMax(60)
+      )
+      .force(
+        'link',
+        forceLink(currentWorkerLinks)
+          .id((d: any) => d.id)
+          .distance(6.5)
+          .strength(0.35)
+      )
+      .force('center', null)
+      .force('r', forceRadial(18, 0, 0, 0).strength(0.85))
+      .force('clusterX', null)
+      .force('clusterY', null)
+      .force('clusterZ', null);
+  } else if (layout === 'clustered') {
+    // TOPOLOGÍA DE CÚMULOS: Fuerza de atracción espacial por cluster/categoría
+    simulation
+      .force(
+        'charge',
+        forceManyBody().strength(-55).distanceMax(55)
+      )
+      .force(
+        'link',
+        forceLink(currentWorkerLinks)
+          .id((d: any) => d.id)
+          .distance(7.5)
+          .strength(0.42)
+      )
+      .force('center', null)
+      .force('r', null)
+      .force(
+        'clusterX',
+        forceX((d: any) => {
+          const cIdx = typeof d.cluster === 'number' ? Math.abs(d.cluster) % CLUSTER_CENTERS.length : 0;
+          return CLUSTER_CENTERS[cIdx][0];
+        }).strength(0.65)
+      )
+      .force(
+        'clusterY',
+        forceY((d: any) => {
+          const cIdx = typeof d.cluster === 'number' ? Math.abs(d.cluster) % CLUSTER_CENTERS.length : 0;
+          return CLUSTER_CENTERS[cIdx][1];
+        }).strength(0.65)
+      )
+      .force(
+        'clusterZ',
+        forceZ((d: any) => {
+          const cIdx = typeof d.cluster === 'number' ? Math.abs(d.cluster) % CLUSTER_CENTERS.length : 0;
+          return CLUSTER_CENTERS[cIdx][2];
+        }).strength(0.65)
+      );
+  } else {
+    // TOPOLOGÍA ORGÁNICA: Fuerza libre clásica
+    simulation
+      .force(
+        'charge',
+        forceManyBody()
+          .strength((d: any) => (d.type === 'relay' ? -120 : -75))
+          .distanceMax(55)
+      )
+      .force(
+        'link',
+        forceLink(currentWorkerLinks)
+          .id((d: any) => d.id)
+          .distance((l: any) => l.distance || 7.5)
+          .strength(0.48)
+      )
+      .force('center', forceCenter(0, 0, 0))
+      .force('r', null)
+      .force('clusterX', null)
+      .force('clusterY', null)
+      .force('clusterZ', null);
   }
 }
 
@@ -184,10 +296,13 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
       stopCurrentSimulation();
 
       const { nodes, links, options } = data;
+      currentLayout = options?.layout || 'organic';
+
       currentNodes = nodes.map(n => ({
         id: n.id,
         slug: n.slug,
         type: n.type || 'primary',
+        cluster: n.cluster,
         x: Number.isFinite(n.x) ? n.x : 0,
         y: Number.isFinite(n.y) ? n.y : 0,
         z: Number.isFinite(n.z) ? n.z : 0,
@@ -199,8 +314,8 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
         fz: n.fz !== undefined ? n.fz : undefined
       }));
 
-      // Copia de links para evitar mutaciones inesperadas
-      const workerLinks = links.map(l => ({
+      // Copia de links limpia para la simulación
+      currentWorkerLinks = links.map(l => ({
         source: l.source,
         target: l.target,
         distance: l.distance || 7.5,
@@ -209,22 +324,10 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
       }));
 
       // Inicialización de simulación 3D nativa
-      simulation = forceSimulation(currentNodes, 3)
-        .force(
-          'charge',
-          forceManyBody()
-            .strength((d: any) => (d.type === 'relay' ? -120 : -75))
-            .distanceMax(55)
-        )
-        .force(
-          'link',
-          forceLink(workerLinks)
-            .id((d: any) => d.id)
-            .distance((l: any) => l.distance || 7.5)
-            .strength(0.48)
-        )
-        .force('center', forceCenter(0, 0, 0))
-        .stop();
+      simulation = forceSimulation(currentNodes, 3).stop();
+
+      // Aplicar las fuerzas de acuerdo con la topología seleccionada
+      applyLayoutForces(currentLayout);
 
       // Configuración de alpha y decaimiento
       const startAlpha = options?.alpha !== undefined ? options.alpha : (data.type === 'UPDATE' ? 0.35 : 1.0);
@@ -261,6 +364,19 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
           },
           [finalBuffer.buffer]
         );
+      }
+      break;
+    }
+
+    case 'SET_LAYOUT': {
+      currentLayout = data.layout || 'organic';
+      if (simulation) {
+        applyLayoutForces(currentLayout);
+        simulation.alpha(0.55).restart();
+        if (!isRunning) {
+          isRunning = true;
+          stepSimulation();
+        }
       }
       break;
     }
@@ -332,4 +448,3 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
     }
   }
 };
-
