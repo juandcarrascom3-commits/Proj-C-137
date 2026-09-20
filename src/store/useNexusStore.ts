@@ -1,18 +1,6 @@
 import { create } from 'zustand';
 import { NexusNote } from '../utils/graphParser';
-
-/**
- * =======================================================================
- * STORE GLOBAL REACTIVO NEXUS (Zustand)
- * =======================================================================
- * Gestiona el estado centralizado de notas Obsidian/Markdown, el nodo
- * activo para la cámara 3D C-137 y filtros de búsqueda.
- *
- * ⚠️ DATOS REALES ÚNICAMENTE: El store ya NO incluye datos sintéticos.
- * Si el sistema arranca sin notas, el grafo muestra un estado vacío limpio.
- * Para pruebas de carga usa la acción `injectTestNodes(count)`.
- * =======================================================================
- */
+import { useUIStore } from './useUIStore';
 
 export interface NodeSpatialCoord {
   x: number;
@@ -23,38 +11,26 @@ export interface NodeSpatialCoord {
   vz?: number;
 }
 
-export interface NexusState {
+export interface NexusDataState {
   notes: NexusNote[];
-  activeNoteId: string;
-  selectedTag: string | null;
-  searchQuery: string;
   savedPositions: Record<string, NodeSpatialCoord>;
 
-  // Acciones CRUD
-  setActiveNoteId: (id: string) => void;
-  setSelectedTag: (tag: string | null) => void;
-  setSearchQuery: (query: string) => void;
+  // Métodos de Posiciones 3D
+  saveNodePositions: (positions: Record<string, NodeSpatialCoord>) => void;
+  getNodePosition: (slug: string) => NodeSpatialCoord | undefined;
+  getNoteById: (id: string) => NexusNote | undefined;
+
+  // CRUD de Notas (Topología)
   addNote: (note: Omit<NexusNote, 'id' | 'updatedAt'>) => string;
   updateNote: (id: string, updates: Partial<NexusNote>) => void;
   deleteNote: (id: string) => void;
-  saveNodePositions: (positions: Record<string, NodeSpatialCoord>) => void;
-  getActiveNote: () => NexusNote | undefined;
-  getNodePosition: (slug: string) => NodeSpatialCoord | undefined;
 
-  /**
-   * Escalador de carga visual: inyecta `count` notas procedurales conectadas
-   * al estado para poner a prueba el rendimiento del grafo sin colapsar el
-   * hilo principal. Opciones: 100 | 300 | 500.
-   */
+  // Pruebas de Carga
   injectTestNodes: (count: number) => void;
-
-  /** Elimina todas las notas de prueba inyectadas (prefijo 'stress-') */
   clearTestNodes: () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Generador procedural de notas de estrés
-// ---------------------------------------------------------------------------
+// Generador procedural intacto (Mantiene exactamente el padding de ceros)
 const CLUSTERS = ['Alpha', 'Vega', 'Orion', 'Sirius', 'Cygnus', 'Pulsar'];
 const CATEGORIES = ['Arquitectura', 'Física', 'Protocolo', 'Datos', 'Red', 'Memoria'];
 
@@ -68,7 +44,6 @@ function generateTestNotes(count: number): NexusNote[] {
     const peerStart = Math.floor(i / clusterSize) * clusterSize;
     const peerEnd = Math.min(peerStart + clusterSize, count);
 
-    // Cada nodo enlaza con ~3 vecinos dentro de su clúster
     const links: string[] = [];
     for (let j = 1; j <= 3; j++) {
       const peerId = peerStart + ((i - peerStart + j) % (peerEnd - peerStart));
@@ -90,21 +65,9 @@ function generateTestNotes(count: number): NexusNote[] {
   return notes;
 }
 
-// ---------------------------------------------------------------------------
-// Estado inicial limpio (sin mocks)
-// ---------------------------------------------------------------------------
-export const useNexusStore = create<NexusState>((set, get) => ({
-  // Estado inicial real: vacío. C137GraphView comprueba notas.length y muestra
-  // el grafo si hay datos, o un placeholder si no los hay.
+export const useNexusStore = create<NexusDataState>((set, get) => ({
   notes: [],
-  activeNoteId: '',
-  selectedTag: null,
-  searchQuery: '',
   savedPositions: {},
-
-  setActiveNoteId: (id: string) => set({ activeNoteId: id }),
-  setSelectedTag: (tag: string | null) => set({ selectedTag: tag }),
-  setSearchQuery: (query: string) => set({ searchQuery: query }),
 
   saveNodePositions: (positions) => {
     set((state) => ({
@@ -115,9 +78,9 @@ export const useNexusStore = create<NexusState>((set, get) => ({
     }));
   },
 
-  getNodePosition: (slug) => {
-    return get().savedPositions[slug];
-  },
+  getNodePosition: (slug) => get().savedPositions[slug],
+
+  getNoteById: (id) => get().notes.find((n) => n.id === id),
 
   addNote: (newNoteData) => {
     const id = `note-${Date.now().toString().slice(-6)}`;
@@ -128,8 +91,10 @@ export const useNexusStore = create<NexusState>((set, get) => ({
     };
     set((state) => ({
       notes: [newNote, ...state.notes],
-      activeNoteId: id,
     }));
+    
+    // Activa automáticamente la nueva nota en el store de UI
+    useUIStore.getState().setActiveNoteId(id);
     return id;
   },
 
@@ -148,31 +113,34 @@ export const useNexusStore = create<NexusState>((set, get) => ({
       const remaining = state.notes.filter((n) => n.id !== id);
       const remainingPositions = { ...state.savedPositions };
       delete remainingPositions[id];
+
+      // Sincroniza la selección de UI si se borró la nota que estaba activa
+      const currentActiveId = useUIStore.getState().activeNoteId;
+      if (currentActiveId === id) {
+        const nextActiveId = remaining.length > 0 ? remaining[0].id : '';
+        useUIStore.getState().setActiveNoteId(nextActiveId);
+      }
+
       return {
         notes: remaining,
         savedPositions: remainingPositions,
-        activeNoteId:
-          state.activeNoteId === id && remaining.length > 0
-            ? remaining[0].id
-            : state.activeNoteId,
       };
     });
-  },
-
-  getActiveNote: () => {
-    const { notes, activeNoteId } = get();
-    return notes.find((n) => n.id === activeNoteId);
   },
 
   injectTestNodes: (count: number) => {
     const safeCount = Math.max(10, Math.min(count, 500));
     const testNotes = generateTestNotes(safeCount);
     set((state) => {
-      // Elimina notas de estrés previas antes de inyectar las nuevas
       const realNotes = state.notes.filter((n) => !n.id.startsWith('stress-'));
+      
+      const currentActiveId = useUIStore.getState().activeNoteId;
+      if (!currentActiveId && testNotes.length > 0) {
+        useUIStore.getState().setActiveNoteId(testNotes[0].id);
+      }
+
       return {
         notes: [...realNotes, ...testNotes],
-        activeNoteId: state.activeNoteId || (testNotes[0]?.id ?? ''),
       };
     });
   },

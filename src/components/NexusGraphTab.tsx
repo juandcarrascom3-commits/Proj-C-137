@@ -1,10 +1,13 @@
 import React, { Suspense } from 'react';
 import { useNexusStore } from '@/store/useNexusStore';
+import { useUIStore } from '@/store/useUIStore';
 
 const C137GraphView = React.lazy(() => import('@/components/C137GraphView'));
 
 export const NexusGraphTab = () => {
-  const { notes, activeNoteId, setActiveNoteId } = useNexusStore();
+  // Separación de responsabilidades:
+  const { notes } = useNexusStore(); // Datos
+  const { activeNoteId, setActiveNoteId } = useUIStore(); // UI
 
   return (
     <div className="w-full h-full relative overflow-hidden">

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { NexusGraphTab } from '@/components/NexusGraphTab';
-import { C137GraphView, GraphTheme } from '@/components/C137GraphView';
 import { useNexusStore } from '@/store/useNexusStore';
+import { useUIStore } from '@/store/useUIStore';
 import { 
   Network, 
   FileText, 
@@ -36,22 +36,27 @@ export default function App() {
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
-  // Store reactivo global
+// 1. Datos del Grafo y Operaciones CRUD
   const { 
     notes, 
+    addNote, 
+    updateNote, 
+    deleteNote, 
+    getNoteById 
+  } = useNexusStore();
+
+  // 2. Estado de Interfaz, Búsqueda y Filtros
+  const { 
     activeNoteId, 
     setActiveNoteId, 
     selectedTag, 
     setSelectedTag,
     searchQuery,
-    setSearchQuery,
-    addNote,
-    updateNote,
-    deleteNote,
-    getActiveNote
-  } = useNexusStore();
+    setSearchQuery
+  } = useUIStore();
 
-  const activeNote = getActiveNote();
+  // Obtener la nota activa usando el helper de datos
+  const activeNote = activeNoteId ? getNoteById(activeNoteId) : undefined;
 
   // Filtrado de notas para el panel lateral de NEXUS
   const filteredNotes = notes.filter((note) => {
