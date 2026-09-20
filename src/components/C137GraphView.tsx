@@ -217,7 +217,7 @@ function Scene({
         <Stars 
           radius={80} 
           depth={60} 
-          count={1200} 
+          count={400} 
           factor={themeCfg.starsFactor * 0.2} 
           saturation={0.5} 
           fade 
@@ -279,9 +279,9 @@ function Scene({
 
       <EffectComposer multisampling={0}>
         <Bloom
-          luminanceThreshold={0.35}
+          luminanceThreshold={0.6}
           luminanceSmoothing={0.75}
-          intensity={0.8}
+          intensity={0.4}
           mipmapBlur
         />
       </EffectComposer>

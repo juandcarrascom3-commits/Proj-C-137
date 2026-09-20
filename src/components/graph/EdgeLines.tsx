@@ -50,8 +50,7 @@ const AdvancedNetworkShader = {
     uniform vec3 uActivePulseColor;
     uniform float uPulseSpeed;
     uniform float uPulseFrequency;
-    uniform float uEdgeMode; // 0.0: Laser, 1.0: Synapse, 2.0: Galaxy, 3.0: Minimal
-    uniform float uBaseOpacity;
+    uniform float uBaseOpacity; // Defaults to 0.15 for minimal resting state
     uniform float uGlowIntensity;
 
     varying float vProgress;
@@ -60,84 +59,29 @@ const AdvancedNetworkShader = {
     varying vec3 vColor;
 
     void main() {
-      // Filtrado por búsqueda o categoría
+      // Filtrado por búsqueda o categoría (atenuación extrema)
       if (vFiltered > 0.5) {
         gl_FragColor = vec4(vColor * 0.08, 0.02);
         return;
       }
 
-      vec3 finalColor = vColor;
+      // Base titanium-like resting thread
+      vec3 finalColor = vColor * 0.5;
       float finalAlpha = uBaseOpacity;
 
-      if (uEdgeMode < 0.5) {
-        // ====================================================================
-        // MODO 0: CYBER LASER (Haces de luz direccionales de alta velocidad)
-        // ====================================================================
-        if (vIsActive > 0.5) {
-          float speed = uPulseSpeed * 1.6;
-          float phase1 = fract(vProgress * uPulseFrequency - uTime * speed);
-          float pulse1 = smoothstep(0.75, 1.0, phase1) * 1.1;
-          
-          float phase2 = fract(vProgress * (uPulseFrequency * 1.3) - uTime * (speed * 0.7) + 0.35);
-          float pulse2 = smoothstep(0.8, 1.0, phase2) * 0.6;
-          
-          float totalPulse = clamp(pulse1 + pulse2, 0.0, 1.4);
-          vec3 neonPulse = mix(vec3(0.0, 0.95, 1.0), uActivePulseColor, 0.6);
-          
-          finalColor = mix(vColor, neonPulse * uGlowIntensity, clamp(totalPulse * 0.85, 0.0, 1.0));
-          finalAlpha = clamp(uBaseOpacity + totalPulse * 0.45, 0.0, 0.98);
-        } else {
-          float phase = fract(vProgress * 0.8 - uTime * 0.4);
-          float ambientPulse = smoothstep(0.88, 1.0, phase) * 0.35;
-          finalColor = vColor * (0.6 + ambientPulse * 0.4);
-          finalAlpha = clamp(uBaseOpacity * 0.75 + ambientPulse * 0.25, 0.0, 0.65);
-        }
-      } else if (uEdgeMode < 1.5) {
-        // ====================================================================
-        // MODO 1: NEURAL SYNAPSE (Ondas bi-direccionales de potencial de acción)
-        // ====================================================================
-        float speed = uPulseSpeed * 1.2;
-        float waveFwd = smoothstep(0.7, 1.0, fract(vProgress * uPulseFrequency - uTime * speed));
-        float waveBwd = smoothstep(0.7, 1.0, fract((1.0 - vProgress) * uPulseFrequency - uTime * (speed * 0.85)));
-        float synapseGlow = clamp(waveFwd + waveBwd, 0.0, 1.3);
+      // Unidirectional light pulse (clean data transfer style)
+      float speed = uPulseSpeed * 1.5;
+      float phase = fract(vProgress * uPulseFrequency - uTime * speed);
+      
+      // Smooth leading edge, softer trailing tail
+      float pulse = smoothstep(0.5, 0.9, phase) * (1.0 - smoothstep(0.9, 1.0, phase));
 
-        if (vIsActive > 0.5) {
-          finalColor = mix(vColor, uActivePulseColor * uGlowIntensity, synapseGlow * 0.85);
-          finalAlpha = clamp(uBaseOpacity + synapseGlow * 0.5, 0.0, 0.98);
-        } else {
-          finalColor = mix(vColor, uActivePulseColor, synapseGlow * 0.35);
-          finalAlpha = clamp(uBaseOpacity + synapseGlow * 0.22, 0.0, 0.7);
-        }
-      } else if (uEdgeMode < 2.5) {
-        // ====================================================================
-        // MODO 2: GALAXY FILAMENT (Materia oscura, plasma y centelleos cósmicos)
-        // ====================================================================
-        float slowTime = uTime * (uPulseSpeed * 0.45);
-        float shimmer1 = sin(vProgress * 14.0 + slowTime * 2.2) * 0.5 + 0.5;
-        float shimmer2 = cos(vProgress * 28.0 - slowTime * 3.4) * 0.5 + 0.5;
-        float cosmicThread = smoothstep(0.2, 0.9, shimmer1 * shimmer2);
-        
-        vec3 stardust = mix(vColor, vec3(1.0, 0.85, 1.0), cosmicThread * 0.45);
-        
-        if (vIsActive > 0.5) {
-          float pulse = smoothstep(0.6, 1.0, fract(vProgress * 2.0 - slowTime * 2.8));
-          finalColor = mix(stardust, uActivePulseColor * uGlowIntensity, pulse);
-          finalAlpha = clamp(uBaseOpacity * 1.2 + cosmicThread * 0.25 + pulse * 0.4, 0.0, 0.95);
-        } else {
-          finalColor = stardust * (0.75 + cosmicThread * 0.45);
-          finalAlpha = clamp(uBaseOpacity * 0.85 + cosmicThread * 0.25, 0.0, 0.6);
-        }
+      if (vIsActive > 0.5) {
+        finalColor = mix(vColor, uActivePulseColor * uGlowIntensity, pulse * 1.5);
+        finalAlpha = clamp(uBaseOpacity + pulse * 0.8, 0.0, 1.0);
       } else {
-        // ====================================================================
-        // MODO 3: MINIMAL THREAD (Líneas sobrias de titanio sin saturación)
-        // ====================================================================
-        if (vIsActive > 0.5) {
-          finalColor = mix(vColor, uActivePulseColor, 0.75);
-          finalAlpha = clamp(uBaseOpacity + 0.38, 0.0, 0.88);
-        } else {
-          finalColor = vColor;
-          finalAlpha = uBaseOpacity;
-        }
+        finalColor = mix(finalColor, vColor, pulse * 0.5);
+        finalAlpha = clamp(uBaseOpacity + pulse * 0.15, 0.0, 1.0);
       }
 
       gl_FragColor = vec4(finalColor, finalAlpha);
