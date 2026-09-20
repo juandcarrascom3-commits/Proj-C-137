@@ -1,4 +1,4 @@
-import React, { useState, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { NexusGraphTab } from '@/components/NexusGraphTab';
 import { useNexusStore } from '@/store/useNexusStore';
 import { useUIStore } from '@/store/useUIStore';
@@ -22,7 +22,7 @@ const C137GraphView = React.lazy(() => import('@/components/C137GraphView'));
  * =======================================================================
  * NEXUS WORKSPACE DEMO CON PESTAÑA <NexusGraphTab />
  * =======================================================================
- * Integración desacoplada entre datos (useNexusStore) y estado de UI (useUIStore).
+ * Integración desacoplada entre datos (useNexusStore + Dexie DB) y estado de UI (useUIStore).
  * =======================================================================
  */
 export default function App() {
@@ -31,13 +31,15 @@ export default function App() {
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
-  // 1. Datos del Grafo y Operaciones CRUD (Store de Datos)
+  // 1. Datos del Grafo, Hidratación e IndexedDB CRUD (Store de Datos)
   const { 
     notes, 
     addNote, 
     updateNote, 
     deleteNote, 
-    getNoteById 
+    getNoteById,
+    loadNotesFromDB,
+    isDbLoaded
   } = useNexusStore();
 
   // 2. Estado de Interfaz, Búsqueda y Filtros (Store de UI desacoplado)
@@ -49,6 +51,11 @@ export default function App() {
     searchQuery,
     setSearchQuery
   } = useUIStore();
+
+  // Carga inicial de datos desde IndexedDB
+  useEffect(() => {
+    loadNotesFromDB();
+  }, [loadNotesFromDB]);
 
   // Nota activa seleccionada
   const activeNote = activeNoteId ? getNoteById(activeNoteId) : undefined;
@@ -68,12 +75,12 @@ export default function App() {
     new Set(notes.flatMap((n) => n.tags))
   );
 
-  const handleCreateQuickNote = () => {
+  const handleCreateQuickNote = async () => {
     const titlePrompt = prompt('Título de la nueva nota en NEXUS:');
     if (!titlePrompt || !titlePrompt.trim()) return;
 
     const randomTag = allTags[Math.floor(Math.random() * allTags.length)] || 'neural';
-    const newId = addNote({
+    const newId = await addNote({
       title: titlePrompt.trim(),
       content: `Nota creada dinámicamente en el espacio neural de NEXUS.\nConectada a [[${notes[0]?.title || 'Protocolo C-137'}]] y catalogada bajo #${randomTag}.`,
       tags: [randomTag, 'fase4'],
@@ -112,6 +119,16 @@ export const NexusGraphTab = () => {
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
   };
+
+  // Pantalla de carga mientras se inicializa IndexedDB
+  if (!isDbLoaded) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-slate-950 text-cyan-400 font-mono text-sm gap-3">
+        <div className="w-3 h-3 rounded-full bg-cyan-400 animate-ping" />
+        <span>Cargando Memoria Neural IndexedDB...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
@@ -294,10 +311,10 @@ export const NexusGraphTab = () => {
                 
                 <div className="flex items-center gap-1.5 pt-1">
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       const newTitle = prompt('Editar título de la nota:', activeNote.title);
                       if (newTitle && newTitle.trim()) {
-                        updateNote(activeNote.id, { title: newTitle.trim() });
+                        await updateNote(activeNote.id, { title: newTitle.trim() });
                       }
                     }}
                     className="flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-300 hover:text-white transition-colors"
@@ -308,9 +325,9 @@ export const NexusGraphTab = () => {
                   </button>
 
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       if (confirm(`¿Eliminar "${activeNote.title}" del grafo neural?`)) {
-                        deleteNote(activeNote.id);
+                        await deleteNote(activeNote.id);
                       }
                     }}
                     className="flex items-center justify-center gap-1 py-1 px-2 rounded bg-red-950/40 hover:bg-red-900/60 border border-red-800/60 text-[10px] font-mono text-red-400 hover:text-red-300 transition-colors"

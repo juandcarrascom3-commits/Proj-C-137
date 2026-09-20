@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { NexusNote } from '../utils/graphParser';
 import { useUIStore } from './useUIStore';
+import { db } from '../db/nexusDatabase';
 
 export interface NodeSpatialCoord {
   x: number;
@@ -14,20 +15,24 @@ export interface NodeSpatialCoord {
 export interface NexusDataState {
   notes: NexusNote[];
   savedPositions: Record<string, NodeSpatialCoord>;
+  isDbLoaded: boolean;
+
+  // Carga e Hidratación desde IndexedDB
+  loadNotesFromDB: () => Promise<void>;
 
   // Métodos de Posiciones 3D
   saveNodePositions: (positions: Record<string, NodeSpatialCoord>) => void;
   getNodePosition: (slug: string) => NodeSpatialCoord | undefined;
   getNoteById: (id: string) => NexusNote | undefined;
 
-  // CRUD de Notas (Topología)
-  addNote: (note: Omit<NexusNote, 'id' | 'updatedAt'>) => string;
-  updateNote: (id: string, updates: Partial<NexusNote>) => void;
-  deleteNote: (id: string) => void;
+  // CRUD de Notas (Topología + Persistencia Dexie)
+  addNote: (note: Omit<NexusNote, 'id' | 'updatedAt'>) => Promise<string>;
+  updateNote: (id: string, updates: Partial<NexusNote>) => Promise<void>;
+  deleteNote: (id: string) => Promise<void>;
 
-  // Pruebas de Carga
-  injectTestNodes: (count: number) => void;
-  clearTestNodes: () => void;
+  // Pruebas de Carga (Persistentes)
+  injectTestNodes: (count: number) => Promise<void>;
+  clearTestNodes: () => Promise<void>;
 }
 
 // Generador procedural intacto (Mantiene exactamente el padding de ceros)
@@ -68,6 +73,17 @@ function generateTestNotes(count: number): NexusNote[] {
 export const useNexusStore = create<NexusDataState>((set, get) => ({
   notes: [],
   savedPositions: {},
+  isDbLoaded: false,
+
+  loadNotesFromDB: async () => {
+    try {
+      const allNotes = await db.notes.toArray();
+      set({ notes: allNotes, isDbLoaded: true });
+    } catch (err) {
+      console.error('[Dexie IndexedDB] Error al cargar notas:', err);
+      set({ isDbLoaded: true });
+    }
+  },
 
   saveNodePositions: (positions) => {
     set((state) => ({
@@ -82,39 +98,52 @@ export const useNexusStore = create<NexusDataState>((set, get) => ({
 
   getNoteById: (id) => get().notes.find((n) => n.id === id),
 
-  addNote: (newNoteData) => {
+  addNote: async (newNoteData) => {
     const id = `note-${Date.now().toString().slice(-6)}`;
     const newNote: NexusNote = {
       ...newNoteData,
       id,
       updatedAt: new Date().toISOString().split('T')[0],
     };
+
+    // Guardar en IndexedDB
+    await db.notes.add(newNote);
+
     set((state) => ({
       notes: [newNote, ...state.notes],
     }));
-    
+
     // Activa automáticamente la nueva nota en el store de UI
     useUIStore.getState().setActiveNoteId(id);
     return id;
   },
 
-  updateNote: (id, updates) => {
+  updateNote: async (id, updates) => {
+    const updatedFields = {
+      ...updates,
+      updatedAt: new Date().toISOString().split('T')[0],
+    };
+
+    // Actualizar en IndexedDB
+    await db.notes.update(id, updatedFields);
+
     set((state) => ({
       notes: state.notes.map((n) =>
-        n.id === id
-          ? { ...n, ...updates, updatedAt: new Date().toISOString().split('T')[0] }
-          : n
+        n.id === id ? { ...n, ...updatedFields } : n
       ),
     }));
   },
 
-  deleteNote: (id) => {
+  deleteNote: async (id) => {
+    // Eliminar de IndexedDB
+    await db.notes.delete(id);
+
     set((state) => {
       const remaining = state.notes.filter((n) => n.id !== id);
       const remainingPositions = { ...state.savedPositions };
       delete remainingPositions[id];
 
-      // Sincroniza la selección de UI si se borró la nota que estaba activa
+      // Sincroniza la selección de UI si se borró la nota activa
       const currentActiveId = useUIStore.getState().activeNoteId;
       if (currentActiveId === id) {
         const nextActiveId = remaining.length > 0 ? remaining[0].id : '';
@@ -128,24 +157,40 @@ export const useNexusStore = create<NexusDataState>((set, get) => ({
     });
   },
 
-  injectTestNodes: (count: number) => {
+  injectTestNodes: async (count: number) => {
     const safeCount = Math.max(10, Math.min(count, 500));
     const testNotes = generateTestNotes(safeCount);
-    set((state) => {
-      const realNotes = state.notes.filter((n) => !n.id.startsWith('stress-'));
-      
-      const currentActiveId = useUIStore.getState().activeNoteId;
-      if (!currentActiveId && testNotes.length > 0) {
-        useUIStore.getState().setActiveNoteId(testNotes[0].id);
-      }
 
-      return {
-        notes: [...realNotes, ...testNotes],
-      };
-    });
+    // Limpiar notas de prueba previas en IndexedDB antes de insertar las nuevas
+    const existingStressKeys = (await db.notes.toArray())
+      .filter((n) => n.id.startsWith('stress-'))
+      .map((n) => n.id);
+
+    if (existingStressKeys.length > 0) {
+      await db.notes.bulkDelete(existingStressKeys);
+    }
+
+    await db.notes.bulkPut(testNotes);
+
+    const allNotes = await db.notes.toArray();
+
+    const currentActiveId = useUIStore.getState().activeNoteId;
+    if (!currentActiveId && testNotes.length > 0) {
+      useUIStore.getState().setActiveNoteId(testNotes[0].id);
+    }
+
+    set({ notes: allNotes });
   },
 
-  clearTestNodes: () => {
+  clearTestNodes: async () => {
+    const stressKeys = (await db.notes.toArray())
+      .filter((n) => n.id.startsWith('stress-'))
+      .map((n) => n.id);
+
+    if (stressKeys.length > 0) {
+      await db.notes.bulkDelete(stressKeys);
+    }
+
     set((state) => ({
       notes: state.notes.filter((n) => !n.id.startsWith('stress-')),
     }));
