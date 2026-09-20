@@ -509,6 +509,8 @@ export function C137GraphView({
   const toggleShowEdges = useUIStore((state) => state.toggleShowEdges);
   const topologyLayout = useUIStore((state) => state.topologyLayout);
   const cycleTopologyLayout = useUIStore((state) => state.cycleTopologyLayout);
+  const glowIntensity = useUIStore((state) => state.glowIntensity);
+  const setGlowIntensity = useUIStore((state) => state.setGlowIntensity);
 
   const { savedPositions, saveNodePositions, setActiveNoteId, notes: storeNotes, injectTestNodes } = useNexusStore();
 
@@ -1131,6 +1133,26 @@ export function C137GraphView({
               {topologyLayout === 'clustered' && 'Cúmulos'}
             </span>
           </button>
+
+          {/* INTENSIDAD DE GLOW */}
+          <label
+            title="Intensidad del glow"
+            className="px-2.5 py-1 rounded-full text-[11px] font-mono text-slate-300 flex items-center gap-1.5 border border-white/10 cursor-pointer"
+          >
+            <span className="hidden sm:inline">Glow</span>
+            <input
+              type="range"
+              min="0.1"
+              max="2.5"
+              step="0.05"
+              value={glowIntensity}
+              onChange={(e) => setGlowIntensity(Number(e.target.value))}
+              className="w-20 h-1 accent-cyan-400 cursor-pointer"
+            />
+            <span className="text-cyan-300 tabular-nums min-w-[2.75rem] text-right">
+              {Math.round(glowIntensity * 100)}%
+            </span>
+          </label>
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 

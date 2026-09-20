@@ -161,6 +161,7 @@ export function EdgeLines({
   const visualStyle = useUIStore((state) => state.visualStyle);
   const showEdges = useUIStore((state) => state.showEdges);
   const aestheticTheme = useUIStore((state) => state.aestheticTheme) as AestheticTheme;
+  const glowIntensity = useUIStore((state) => state.glowIntensity);
 
   // Determinar tema activo
   const activeThemeKey: AestheticTheme = (aestheticTheme || theme || DEFAULT_THEME_KEY) as AestheticTheme;
@@ -203,8 +204,8 @@ export function EdgeLines({
     if (matRef.current) {
       matRef.current.uniforms.uTime.value = state.clock.getElapsedTime();
       matRef.current.uniforms.uEdgeMode.value = edgeModeNumeric;
-      matRef.current.uniforms.uBaseOpacity.value = currentTheme.edgeOpacity;
-      matRef.current.uniforms.uGlowIntensity.value = currentTheme.glowBoost;
+      matRef.current.uniforms.uBaseOpacity.value = currentTheme.edgeOpacity * Math.min(1.3, glowIntensity);
+      matRef.current.uniforms.uGlowIntensity.value = currentTheme.glowBoost * glowIntensity;
       matRef.current.uniforms.uPulseSpeed.value = currentTheme.pulseSpeed;
       matRef.current.uniforms.uPulseFrequency.value = currentTheme.pulseFrequency;
       matRef.current.uniforms.uActivePulseColor.value.set(currentTheme.edgeColor);

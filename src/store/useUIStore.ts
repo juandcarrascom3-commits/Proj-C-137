@@ -16,6 +16,7 @@ export interface UIState {
   aestheticTheme: AestheticTheme;     // Rotación de los 10 temas
   showEdges: boolean;                 // Visibilidad de las conexiones
   topologyLayout: TopologyLayoutMode; // 'organic' | 'spherical' | 'clustered'
+  glowIntensity: number;              // Intensidad del glow (0.1–2.5)
 
   setActiveNoteId: (id: string) => void;
   setSelectedTag: (tag: string | null) => void;
@@ -27,6 +28,7 @@ export interface UIState {
   toggleShowEdges: () => void;
   setTopologyLayout: (layout: TopologyLayoutMode) => void;
   cycleTopologyLayout: () => void;
+  setGlowIntensity: (value: number) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -39,6 +41,7 @@ export const useUIStore = create<UIState>()(
       aestheticTheme: 'cyberpunk',
       showEdges: true,
       topologyLayout: 'organic',
+      glowIntensity: 1,
 
       setActiveNoteId: (id) => set({ activeNoteId: id }),
       setSelectedTag: (tag) => set({ selectedTag: tag }),
@@ -68,6 +71,9 @@ export const useUIStore = create<UIState>()(
         const nextIndex = (layouts.indexOf(state.topologyLayout) + 1) % layouts.length;
         return { topologyLayout: layouts[nextIndex] };
       }),
+
+      setGlowIntensity: (value) =>
+        set({ glowIntensity: Math.min(2.5, Math.max(0.1, value)) }),
     }),
     {
       name: 'nexus-ui-preferences', // Clave única en LocalStorage
@@ -75,7 +81,8 @@ export const useUIStore = create<UIState>()(
         visualStyle: state.visualStyle,
         aestheticTheme: state.aestheticTheme,
         showEdges: state.showEdges,
-        topologyLayout: state.topologyLayout
+        topologyLayout: state.topologyLayout,
+        glowIntensity: state.glowIntensity,
       }), // Persiste las preferencias visuales del usuario sin afectar búsquedas o selecciones
     }
   )
