@@ -55,6 +55,7 @@ export interface C137GraphViewProps {
   theme?: GraphTheme;
 }
 
+// ✅ Función auxiliar pura: Sin Hooks dentro de ella
 function buildConstellationBenchmark() {
   const TOTAL = 150;
   const rawNodes: Graph3DNode[] = [];
@@ -497,11 +498,13 @@ export function C137GraphView({
   const initialDeepLinkCheckedRef = useRef(false);
   const isFirstSimulationRef = useRef(true);
 
-  // ────────────────---------------------------------------------------------
-  // 1. ZONA DE LÓGICA (Extraer variables y métodos desde useUIStore)
-  // ────────────────---------------------------------------------------------
+  // ─────────────────────────────────────────────────────────────────────────
+  // 1. ZONA DE LÓGICA (Hooks declarados al inicio del componente)
+  // ─────────────────────────────────────────────────────────────────────────
   const visualStyle = useUIStore((state) => state.visualStyle);
   const cycleVisualStyle = useUIStore((state) => state.cycleVisualStyle);
+  const aestheticTheme = useUIStore((state) => state.aestheticTheme);
+  const cycleAestheticTheme = useUIStore((state) => state.cycleAestheticTheme);
   const showEdges = useUIStore((state) => state.showEdges);
   const toggleShowEdges = useUIStore((state) => state.toggleShowEdges);
   const topologyLayout = useUIStore((state) => state.topologyLayout);
@@ -852,7 +855,6 @@ export function C137GraphView({
     return set;
   }, [searchTerm, currentGraph.nodes, storeNotes]);
 
-  // OPTIMIZACIÓN: Reutiliza `matchingNodeIds` para evitar filtrado duplicado de la base de datos
   const searchResults = useMemo(() => {
     if (!searchTerm.trim() || matchingNodeIds.size === 0) return [];
     const results: Graph3DNode[] = [];
@@ -1064,9 +1066,7 @@ export function C137GraphView({
         </div>
       </div>
 
-      {/* ─────────────────────────────────────────────────────────────────── */}
-      {/* 2. ZONA DE INTERFAZ (Barra Flotante Inferior / Dock)               */}
-      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* 3. BARRA FLOTANTE INFERIOR (Dock de controles) */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto max-w-[95vw] overflow-x-auto scrollbar-none">
         <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-gray-950/80 backdrop-blur-md border border-white/10 shadow-2xl text-slate-300">
           
@@ -1092,18 +1092,13 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
-          {/* CONMUTADOR DINÁMICO DE ESTILO VISUAL (Neón / Categorías / Minimal) */}
+          {/* ROTADOR DE TEMAS ESTÉTICOS */}
           <button
-            onClick={cycleVisualStyle}
-            title="Cambiar Estilo Visual (Neón -> Categorías -> Minimal)"
-            className="px-2.5 py-1 rounded-full text-[11px] font-mono bg-white/5 hover:bg-white/10 text-slate-300 transition-all flex items-center gap-1.5 border border-white/10"
+            onClick={cycleAestheticTheme}
+            title="Cambiar Tema Estético (10 Temas)"
+            className="px-2.5 py-1 rounded-full text-[11px] font-mono text-slate-300 hover:text-cyan-300 hover:bg-white/5 transition-all flex items-center gap-1.5 border border-white/10"
           >
-            <span>🎨</span>
-            <span className="capitalize hidden sm:inline">
-              {visualStyle === 'neon' && 'Neón'}
-              {visualStyle === 'category' && 'Categorías'}
-              {visualStyle === 'minimal' && 'Minimal'}
-            </span>
+            🎨 <span className="capitalize font-bold text-white">{aestheticTheme}</span>
           </button>
 
           {/* BOTÓN DE VISIBILIDAD DE RED / CONEXIONES */}
@@ -1200,14 +1195,22 @@ export function C137GraphView({
 
           <div className="w-px h-4 bg-white/10 mx-1" />
 
-          {/* Prueba de Carga / Estrés */}
+          {/* Prueba de Carga / Estrés de Nodos */}
           <button
             onClick={() => {
               const currentCount = currentGraph.nodes.length;
-              const nextAmount = currentCount >= 300 ? 500 : currentCount >= 100 ? 300 : 100;
+              const nextAmount =
+                currentCount >= 1500
+                  ? 500
+                  : currentCount >= 1000
+                  ? 1500
+                  : currentCount >= 500
+                  ? 1000
+                  : 500;
+
               injectTestNodes(nextAmount);
             }}
-            title="Prueba de Carga / Estrés de Nodos"
+            title="Prueba de Carga / Estrés de Nodos (Hasta 1500)"
             className="px-2.5 py-1 rounded-full text-[11px] font-mono text-slate-400 hover:text-emerald-300 hover:bg-white/5 transition-all flex items-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5 text-emerald-400" />

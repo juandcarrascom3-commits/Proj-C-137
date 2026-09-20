@@ -16,6 +16,33 @@ export interface InspectorPanelProps {
   onOpenNote?: (id: string) => void;
 }
 
+export function StyleSelectorHUD() {
+  const visualStyle = useUIStore((state) => state.visualStyle);
+  const cycleVisualStyle = useUIStore((state) => state.cycleVisualStyle);
+  const topologyLayout = useUIStore((state) => state.topologyLayout);
+  const cycleTopologyLayout = useUIStore((state) => state.cycleTopologyLayout);
+
+  return (
+    <div className="fixed top-4 left-4 z-50 flex gap-2 p-2 rounded-xl backdrop-blur-xl bg-slate-950/40 border border-cyan-500/20 shadow-lg">
+      {/* Botón de Estilo Visual */}
+      <button
+        onClick={cycleVisualStyle}
+        className="px-3 py-1.5 text-xs font-mono uppercase tracking-wider rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition-all"
+      >
+        🎨 Estilo: <span className="font-bold text-white">{visualStyle}</span>
+      </button>
+
+      {/* Botón de Topología (Agrupamiento por Clústeres) */}
+      <button
+        onClick={cycleTopologyLayout}
+        className="px-3 py-1.5 text-xs font-mono uppercase tracking-wider rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 transition-all"
+      >
+        🌐 Red: <span className="font-bold text-white">{topologyLayout}</span>
+      </button>
+    </div>
+  );
+}
+
 export function InspectorPanel({
   selectedNode,
   displayNode,

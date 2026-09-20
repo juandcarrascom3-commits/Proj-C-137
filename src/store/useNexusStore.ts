@@ -35,8 +35,7 @@ export interface NexusDataState {
   clearTestNodes: () => Promise<void>;
 }
 
-// Generador procedural intacto (Mantiene exactamente el padding de ceros)
-const CLUSTERS = ['Alpha', 'Vega', 'Orion', 'Sirius', 'Cygnus', 'Pulsar'];
+const CLUSTERS = ['Alpha', 'Vega', 'Orion', 'Sirius', 'Cygnus', 'Pulsar', 'Andromeda', 'Centauri'];
 const CATEGORIES = ['Arquitectura', 'Física', 'Protocolo', 'Datos', 'Red', 'Memoria'];
 
 function generateTestNotes(count: number): NexusNote[] {
@@ -45,15 +44,29 @@ function generateTestNotes(count: number): NexusNote[] {
   for (let i = 0; i < count; i++) {
     const cluster = CLUSTERS[i % CLUSTERS.length];
     const category = CATEGORIES[i % CATEGORIES.length];
+    
+    // Conexiones asimétricas y orgánicas
     const clusterSize = Math.ceil(count / CLUSTERS.length);
     const peerStart = Math.floor(i / clusterSize) * clusterSize;
     const peerEnd = Math.min(peerStart + clusterSize, count);
 
     const links: string[] = [];
-    for (let j = 1; j <= 3; j++) {
-      const peerId = peerStart + ((i - peerStart + j) % (peerEnd - peerStart));
+    const linkCount = Math.floor(Math.random() * 4) + 1;
+
+    for (let j = 1; j <= linkCount; j++) {
+      // 70% conexiones dentro del mismo cluster, 30% puentes inter-cluster
+      let peerId: number;
+      if (Math.random() < 0.7 && peerEnd > peerStart) {
+        peerId = peerStart + Math.floor(Math.random() * (peerEnd - peerStart));
+      } else {
+        peerId = Math.floor(Math.random() * count);
+      }
+
       if (peerId !== i) {
-        links.push(`[[stress-${peerId.toString().padStart(4, '0')}]]`);
+        const linkTag = `[[stress-${peerId.toString().padStart(4, '0')}]]`;
+        if (!links.includes(linkTag)) {
+          links.push(linkTag);
+        }
       }
     }
 
@@ -106,14 +119,12 @@ export const useNexusStore = create<NexusDataState>((set, get) => ({
       updatedAt: new Date().toISOString().split('T')[0],
     };
 
-    // Guardar en IndexedDB
     await db.notes.add(newNote);
 
     set((state) => ({
       notes: [newNote, ...state.notes],
     }));
 
-    // Activa automáticamente la nueva nota en el store de UI
     useUIStore.getState().setActiveNoteId(id);
     return id;
   },
@@ -124,7 +135,6 @@ export const useNexusStore = create<NexusDataState>((set, get) => ({
       updatedAt: new Date().toISOString().split('T')[0],
     };
 
-    // Actualizar en IndexedDB
     await db.notes.update(id, updatedFields);
 
     set((state) => ({
@@ -135,7 +145,6 @@ export const useNexusStore = create<NexusDataState>((set, get) => ({
   },
 
   deleteNote: async (id) => {
-    // Eliminar de IndexedDB
     await db.notes.delete(id);
 
     set((state) => {
@@ -143,7 +152,6 @@ export const useNexusStore = create<NexusDataState>((set, get) => ({
       const remainingPositions = { ...state.savedPositions };
       delete remainingPositions[id];
 
-      // Sincroniza la selección de UI si se borró la nota activa
       const currentActiveId = useUIStore.getState().activeNoteId;
       if (currentActiveId === id) {
         const nextActiveId = remaining.length > 0 ? remaining[0].id : '';
@@ -158,29 +166,23 @@ export const useNexusStore = create<NexusDataState>((set, get) => ({
   },
 
   injectTestNodes: async (count: number) => {
-    const safeCount = Math.max(10, Math.min(count, 500));
-    const testNotes = generateTestNotes(safeCount);
+  // Cambia el limite maximo de 500 a 1500
+  const safeCount = Math.max(10, Math.min(count, 1500));
+  const testNotes = generateTestNotes(safeCount);
 
-    // Limpiar notas de prueba previas en IndexedDB antes de insertar las nuevas
-    const existingStressKeys = (await db.notes.toArray())
-      .filter((n) => n.id.startsWith('stress-'))
-      .map((n) => n.id);
+  const existingStressKeys = (await db.notes.toArray())
+    .filter((n) => n.id.startsWith('stress-'))
+    .map((n) => n.id);
 
-    if (existingStressKeys.length > 0) {
-      await db.notes.bulkDelete(existingStressKeys);
-    }
+  if (existingStressKeys.length > 0) {
+    await db.notes.bulkDelete(existingStressKeys);
+  }
 
-    await db.notes.bulkPut(testNotes);
+  await db.notes.bulkPut(testNotes);
+  const allNotes = await db.notes.toArray();
 
-    const allNotes = await db.notes.toArray();
-
-    const currentActiveId = useUIStore.getState().activeNoteId;
-    if (!currentActiveId && testNotes.length > 0) {
-      useUIStore.getState().setActiveNoteId(testNotes[0].id);
-    }
-
-    set({ notes: allNotes });
-  },
+  set({ notes: allNotes });
+},
 
   clearTestNodes: async () => {
     const stressKeys = (await db.notes.toArray())
