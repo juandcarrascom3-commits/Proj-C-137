@@ -2,7 +2,7 @@ import React from 'react';
 import { FileText, Tag, Link2, ArrowRight, Crosshair, X, ExternalLink, CheckCircle2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Graph3DNode } from './types';
-import { useNexusStore } from '../../store/useNexusStore';
+import { useUIStore } from '../../store/useUIStore';
 
 export interface InspectorPanelProps {
   selectedNode: Graph3DNode | null;
@@ -27,7 +27,8 @@ export function InspectorPanel({
   controlsRef,
   onOpenNote
 }: InspectorPanelProps) {
-  const { activeNoteId, setActiveNoteId } = useNexusStore();
+  // Conexión desacoplada con useUIStore (Fase 1.1)
+  const { activeNoteId, setActiveNoteId } = useUIStore();
 
   const handleOpenInNexus = (slug: string) => {
     setActiveNoteId(slug);
@@ -42,14 +43,17 @@ export function InspectorPanel({
     <div 
       id="c137-node-inspector"
       className={`fixed z-30 flex flex-col backdrop-blur-md bg-gray-950/80 shadow-2xl transition-transform duration-300 ease-out pointer-events-auto
-                 bottom-0 left-0 right-0 w-full max-h-[60vh] rounded-t-2xl border-t border-white/10
-                 md:right-4 md:top-16 md:bottom-auto md:left-auto md:w-[380px] md:h-[calc(100vh-80px)] md:max-h-none md:rounded-2xl md:border md:border-white/10
-                 ${selectedNode 
-                   ? 'translate-y-0 md:translate-x-0' 
-                   : 'translate-y-full md:translate-y-0 md:translate-x-full pointer-events-none'}`}
+                  bottom-0 left-0 right-0 w-full max-h-[60vh] rounded-t-2xl border-t border-white/10
+                  md:right-4 md:top-16 md:bottom-auto md:left-auto md:w-[380px] md:h-[calc(100vh-80px)] md:max-h-none md:rounded-2xl md:border md:border-white/10
+                  ${selectedNode 
+                    ? 'translate-y-0 md:translate-x-0' 
+                    : 'translate-y-full md:translate-y-0 md:translate-x-full pointer-events-none'}`}
     >
+      {/* Indicador táctil deslizable (Drag Handle) exclusivo para pantallas móviles */}
+      <div className="w-10 h-1 bg-white/20 rounded-full mx-auto my-2 md:hidden shrink-0" />
+
       {displayNode && (
-        <div className="flex flex-col h-full p-5 overflow-hidden">
+        <div className="flex flex-col h-full p-5 pt-2 md:pt-5 overflow-hidden">
           {/* Cabecera */}
           <div className="flex items-start justify-between pb-3 border-b border-white/10 shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
