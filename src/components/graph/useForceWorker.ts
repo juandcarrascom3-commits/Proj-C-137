@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Graph3DNode, Graph3DLink } from './types';
-import { useUIStore } from '../../store/useUIStore';
+import { useUIStore, TopologyLayoutMode } from '../../store/useUIStore';
 
 export interface ForceWorkerState {
   isSimulating: boolean;
@@ -133,7 +133,7 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
   useEffect(() => {
     if (workerRef.current) {
       workerRef.current.postMessage({
-        type: 'SET_LAYOUT',
+        type: 'SET_TOPOLOGY',
         layout: topologyLayout
       });
       setState(prev => ({ ...prev, isSimulating: true }));
@@ -168,7 +168,8 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
         id: n.id,
         slug: n.slug,
         type: n.type,
-        cluster: n.cluster, // Necesario para la distribución en cúmulos
+        category: n.category,
+        degree: n.degree ?? n.connections?.length ?? 0,
         x: n.x,
         y: n.y,
         z: n.z,
@@ -215,6 +216,17 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
     }
   }, []);
 
+  const setTopology = useCallback((layout: TopologyLayoutMode) => {
+    useUIStore.getState().setTopologyLayout(layout);
+    if (workerRef.current) {
+      workerRef.current.postMessage({
+        type: 'SET_TOPOLOGY',
+        layout
+      });
+      setState(prev => ({ ...prev, isSimulating: true }));
+    }
+  }, []);
+
   const unpinNode = useCallback((id: number) => {
     if (workerRef.current) {
       workerRef.current.postMessage({
@@ -231,6 +243,7 @@ export function useForceWorker({ onPositionsUpdate, onSimulationEnd }: UseForceW
     stop,
     pinNode,
     unpinNode,
+    setTopology,
     isSimulating: state.isSimulating,
     alpha: state.alpha,
     workerSupported: state.workerSupported

@@ -22,6 +22,7 @@ export interface WorkerNode {
   fx?: number | null;
   fy?: number | null;
   fz?: number | null;
+  degree?: number;
 }
 
 export interface WorkerLink {
@@ -43,6 +44,7 @@ export interface WorkerInitPayload {
     warmupTicks?: number;
     chargeStrength?: number;
     centerStrength?: number;
+    layout?: TopologyLayout;
   };
 }
 
@@ -73,13 +75,21 @@ export interface WorkerRecyclePayload {
   buffer: Float32Array;
 }
 
+export type TopologyLayout = 'clusters' | 'spherical' | 'radial' | 'organic';
+
+export interface WorkerTopologyPayload {
+  type: 'SET_TOPOLOGY';
+  layout: TopologyLayout;
+}
+
 export type WorkerInMessage = 
   | WorkerInitPayload 
   | WorkerReheatPayload 
   | WorkerStopPayload 
   | WorkerPinPayload 
   | WorkerUnpinPayload
-  | WorkerRecyclePayload;
+  | WorkerRecyclePayload
+  | WorkerTopologyPayload;
 
 const ctx: any = self;
 
@@ -89,16 +99,175 @@ let isRunning = false;
 let tickTimer: any = null;
 
 let recycledBuffers: Float32Array[] = [];
+let currentLayout: TopologyLayout = 'clusters';
+let currentLinks: Array<{ source: number; target: number; distance: number; weight?: number; type?: string }> = [];
 
-// Centroides espaciales para dividir las categorías en islas / clústeres
+/** Centroides 3D estelares por categoría (islas de constelación). */
 const CATEGORY_CENTERS: Record<string, [number, number, number]> = {
-  Arquitectura: [100, 70, 0],
-  Física: [-100, 90, 50],
-  Protocolo: [120, -80, -40],
-  Datos: [-90, -100, 70],
-  Red: [0, 140, -90],
-  Memoria: [0, -130, 80],
+  Arquitectura: [140, 70, -40],   // Cian Neón #06b6d4
+  Física: [-140, 110, 60],        // Violeta Cuántico #a855f7
+  Protocolo: [130, -100, -70],    // Fuego Ámbar #f97316
+  Datos: [-120, -130, 90],        // Rosa Neón #ec4899
+  Red: [0, 160, -110],            // Verde Esmeralda #10b981
+  Memoria: [0, -160, 100],        // Azul Cobalto #3b82f6
+  IA: [150, 30, 130],             // Amarillo Eléctrico #facc15
+  Cuántico: [-150, -30, -130],    // Cian Puro #00f0ff
 };
+
+const VALID_LAYOUTS: TopologyLayout[] = ['clusters', 'spherical', 'radial', 'organic'];
+
+function normalizeLayout(layout: unknown): TopologyLayout {
+  if (layout === 'clustered') return 'clusters';
+  if (typeof layout === 'string' && VALID_LAYOUTS.includes(layout as TopologyLayout)) {
+    return layout as TopologyLayout;
+  }
+  return currentLayout;
+}
+
+function nodeDegree(d: WorkerNode): number {
+  return d.degree ?? 0;
+}
+
+function isHubNode(d: WorkerNode): boolean {
+  return nodeDegree(d) > 5 || d.type === 'relay';
+}
+
+function categoryCenter(d: WorkerNode): [number, number, number] {
+  return CATEGORY_CENTERS[d.category || ''] ?? [0, 0, 0];
+}
+
+/** Fuerza hacia una cáscara esférica; radio proporcional al grado. */
+function forceSphericalShell() {
+  let nodes: WorkerNode[] = [];
+  const force = (alpha: number) => {
+    for (let i = 0; i < nodes.length; i++) {
+      const d = nodes[i];
+      const targetR = 72 + Math.min(nodeDegree(d), 28) * 5.5;
+      let { x, y, z } = d;
+      let r = Math.hypot(x, y, z);
+      if (r < 1e-6) {
+        x = (Math.random() - 0.5) * 2;
+        y = (Math.random() - 0.5) * 2;
+        z = (Math.random() - 0.5) * 2;
+        r = Math.hypot(x, y, z) || 1;
+        d.x = x;
+        d.y = y;
+        d.z = z;
+      }
+      const k = ((targetR - r) / r) * 0.48 * alpha;
+      d.vx = (d.vx || 0) + x * k;
+      d.vy = (d.vy || 0) + y * k;
+      d.vz = (d.vz || 0) + z * k;
+    }
+  };
+  (force as any).initialize = (n: WorkerNode[]) => {
+    nodes = n;
+  };
+  return force;
+}
+
+/** Hubs en el núcleo; notas en abanicos concéntricos según categoría. */
+function forceRadialFans() {
+  let nodes: WorkerNode[] = [];
+  const force = (alpha: number) => {
+    for (let i = 0; i < nodes.length; i++) {
+      const d = nodes[i];
+      if (isHubNode(d)) {
+        const k = 0.55 * alpha;
+        d.vx = (d.vx || 0) - d.x * k;
+        d.vy = (d.vy || 0) - d.y * k;
+        d.vz = (d.vz || 0) - d.z * k;
+        continue;
+      }
+
+      const [cx, cy, cz] = categoryCenter(d);
+      const mag = Math.hypot(cx, cy, cz) || 1;
+      const fan = ((d.id * 17) % 100) / 100;
+      const ring = 88 + (5 - Math.min(nodeDegree(d), 5)) * 16;
+      const swirl = fan * 0.55;
+      const tx = (cx / mag) * ring + cy * swirl * 0.12;
+      const ty = (cy / mag) * ring + cz * swirl * 0.12;
+      const tz = (cz / mag) * ring + cx * swirl * 0.12;
+      const pull = 0.32 * alpha;
+      d.vx = (d.vx || 0) + (tx - d.x) * pull;
+      d.vy = (d.vy || 0) + (ty - d.y) * pull;
+      d.vz = (d.vz || 0) + (tz - d.z) * pull;
+    }
+  };
+  (force as any).initialize = (n: WorkerNode[]) => {
+    nodes = n;
+  };
+  return force;
+}
+
+function clearLayoutForces() {
+  if (!simulation) return;
+  simulation
+    .force('clusterX', null)
+    .force('clusterY', null)
+    .force('clusterZ', null)
+    .force('shell', null)
+    .force('radialFans', null);
+}
+
+function applyTopology(layout: TopologyLayout, reheat = true) {
+  if (!simulation) return;
+  currentLayout = layout;
+
+  const charge = simulation.force('charge');
+  const link = simulation.force('link');
+  clearLayoutForces();
+
+  if (layout === 'clusters') {
+    if (charge) {
+      charge
+        .strength((d: WorkerNode) => (d.type === 'relay' ? -110 : -70))
+        .distanceMax(140);
+    }
+    if (link) {
+      link.distance((l: any) => l.distance || 40).strength(0.45);
+    }
+    simulation
+      .force('center', forceCenter(0, 0, 0).strength(0.04))
+      .force('clusterX', forceX((d: WorkerNode) => categoryCenter(d)[0]).strength(0.35))
+      .force('clusterY', forceY((d: WorkerNode) => categoryCenter(d)[1]).strength(0.35))
+      .force('clusterZ', forceZ((d: WorkerNode) => categoryCenter(d)[2]).strength(0.35));
+  } else if (layout === 'spherical') {
+    if (charge) {
+      charge.strength(-90).distanceMax(160);
+    }
+    if (link) {
+      link.distance((l: any) => l.distance || 28).strength(0.22);
+    }
+    simulation
+      .force('center', forceCenter(0, 0, 0).strength(0.12))
+      .force('shell', forceSphericalShell());
+  } else if (layout === 'radial') {
+    if (charge) {
+      charge
+        .strength((d: WorkerNode) => (isHubNode(d) ? -40 : -85))
+        .distanceMax(150);
+    }
+    if (link) {
+      link.distance((l: any) => (l.type === 'tag' ? 48 : 36)).strength(0.38);
+    }
+    simulation
+      .force('center', forceCenter(0, 0, 0).strength(0.08))
+      .force('radialFans', forceRadialFans());
+  } else {
+    if (charge) {
+      charge.strength(-180).distanceMax(220);
+    }
+    if (link) {
+      link.distance(60).strength(0.22);
+    }
+    simulation.force('center', forceCenter(0, 0, 0).strength(0.015));
+  }
+
+  if (reheat) {
+    simulation.alpha(0.65).restart();
+  }
+}
 
 function stopCurrentSimulation() {
   isRunning = false;
@@ -189,10 +358,11 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
         vz: n.vz,
         fx: n.fx !== undefined ? n.fx : undefined,
         fy: n.fy !== undefined ? n.fy : undefined,
-        fz: n.fz !== undefined ? n.fz : undefined
+        fz: n.fz !== undefined ? n.fz : undefined,
+        degree: n.degree
       }));
 
-      const workerLinks = links.map(l => ({
+      currentLinks = links.map(l => ({
         source: l.source,
         target: l.target,
         distance: l.distance || 8.0,
@@ -200,26 +370,37 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
         type: l.type
       }));
 
-      // Simulación 3D con fuerzas de agrupación por Clústeres (Rompe los diamantes)
+      const degreeMap = new Map<number, number>();
+      for (let i = 0; i < currentLinks.length; i++) {
+        const l = currentLinks[i];
+        degreeMap.set(l.source, (degreeMap.get(l.source) || 0) + 1);
+        degreeMap.set(l.target, (degreeMap.get(l.target) || 0) + 1);
+      }
+      for (let i = 0; i < currentNodes.length; i++) {
+        const n = currentNodes[i];
+        if (n.degree === undefined) {
+          n.degree = degreeMap.get(n.id) || 0;
+        }
+      }
+
       simulation = forceSimulation(currentNodes, 3)
         .force(
           'charge',
           forceManyBody()
-            .strength((d: any) => (d.type === 'relay' ? -100 : -60))
+            .strength((d: WorkerNode) => (d.type === 'relay' ? -100 : -60))
             .distanceMax(65)
         )
         .force(
           'link',
-          forceLink(workerLinks)
+          forceLink(currentLinks)
             .id((d: any) => d.id)
             .distance((l: any) => l.distance || 8.0)
             .strength(0.45)
         )
         .force('center', forceCenter(0, 0, 0))
-        .force('clusterX', forceX((d: any) => (CATEGORY_CENTERS[d.category]?.[0] ?? 0)).strength(0.28))
-        .force('clusterY', forceY((d: any) => (CATEGORY_CENTERS[d.category]?.[1] ?? 0)).strength(0.28))
-        .force('clusterZ', forceZ((d: any) => (CATEGORY_CENTERS[d.category]?.[2] ?? 0)).strength(0.28))
         .stop();
+
+      applyTopology(normalizeLayout(options?.layout), false);
 
       const startAlpha = options?.alpha !== undefined ? options.alpha : (data.type === 'UPDATE' ? 0.35 : 1.0);
       simulation.alpha(startAlpha);
@@ -252,6 +433,15 @@ ctx.onmessage = (event: MessageEvent<WorkerInMessage>) => {
           },
           [finalBuffer.buffer]
         );
+      }
+      break;
+    }
+
+    case 'SET_TOPOLOGY': {
+      applyTopology(normalizeLayout(data.layout), true);
+      if (simulation && !isRunning) {
+        isRunning = true;
+        stepSimulation();
       }
       break;
     }

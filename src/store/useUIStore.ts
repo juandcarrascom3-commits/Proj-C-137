@@ -6,7 +6,7 @@ import {
   AESTHETIC_THEMES 
 } from '../utils/visualStyles';
 
-export type TopologyLayoutMode = 'organic' | 'spherical' | 'clustered';
+export type TopologyLayoutMode = 'clusters' | 'spherical' | 'radial' | 'organic';
 
 export interface UIState {
   activeNoteId: string;
@@ -15,7 +15,7 @@ export interface UIState {
   visualStyle: VisualStyleMode;       // 'neon' | 'category' | 'minimal'
   aestheticTheme: AestheticTheme;     // Rotación de los 10 temas
   showEdges: boolean;                 // Visibilidad de las conexiones
-  topologyLayout: TopologyLayoutMode; // 'organic' | 'spherical' | 'clustered'
+  topologyLayout: TopologyLayoutMode; // 'clusters' | 'spherical' | 'radial' | 'organic'
   glowIntensity: number;              // Intensidad del glow (0.1–2.5)
 
   setActiveNoteId: (id: string) => void;
@@ -40,7 +40,7 @@ export const useUIStore = create<UIState>()(
       visualStyle: 'neon',
       aestheticTheme: 'cyberpunk',
       showEdges: true,
-      topologyLayout: 'organic',
+      topologyLayout: 'clusters',
       glowIntensity: 1,
 
       setActiveNoteId: (id) => set({ activeNoteId: id }),
@@ -67,8 +67,8 @@ export const useUIStore = create<UIState>()(
       setTopologyLayout: (layout) => set({ topologyLayout: layout }),
 
       cycleTopologyLayout: () => set((state) => {
-        const layouts: TopologyLayoutMode[] = ['organic', 'spherical', 'clustered'];
-        const nextIndex = (layouts.indexOf(state.topologyLayout) + 1) % layouts.length;
+        const layouts: TopologyLayoutMode[] = ['clusters', 'spherical', 'radial', 'organic'];
+        const nextIndex = (Math.max(0, layouts.indexOf(state.topologyLayout)) + 1) % layouts.length;
         return { topologyLayout: layouts[nextIndex] };
       }),
 
@@ -83,7 +83,18 @@ export const useUIStore = create<UIState>()(
         showEdges: state.showEdges,
         topologyLayout: state.topologyLayout,
         glowIntensity: state.glowIntensity,
-      }), // Persiste las preferencias visuales del usuario sin afectar búsquedas o selecciones
+      }),
+      merge: (persisted, current) => {
+        const stored = (persisted || {}) as Partial<UIState> & { topologyLayout?: string };
+        const layout = stored.topologyLayout === 'clustered'
+          ? 'clusters'
+          : stored.topologyLayout;
+        return {
+          ...current,
+          ...stored,
+          topologyLayout: (layout as TopologyLayoutMode) || current.topologyLayout,
+        };
+      }, // Persiste las preferencias visuales del usuario sin afectar búsquedas o selecciones
     }
   )
 );

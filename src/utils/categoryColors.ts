@@ -1,45 +1,43 @@
 import * as THREE from 'three';
-import { AESTHETIC_THEMES, AestheticTheme } from './visualStyles';
 
-// Exportación puente para mantener compatibilidad con componentes que usan CATEGORY_PALETTE
-export const CATEGORY_PALETTE: Record<string, string> = AESTHETIC_THEMES.cyberpunk.palette;
-
-// Mapea la paleta del tema activo a un formato { hex, rgb }
-export function getCategoryColorsMap(theme: AestheticTheme = 'cyberpunk') {
-  const palette = AESTHETIC_THEMES[theme]?.palette || AESTHETIC_THEMES.cyberpunk.palette;
-  const result: Record<string, { hex: string; rgb: THREE.Color }> = {};
-
-  Object.entries(palette).forEach(([cat, hex]) => {
-    result[cat] = { hex, rgb: new THREE.Color(hex) };
-  });
-
-  return result;
+export interface CategoryColorEntry {
+  hex: string;
+  color: THREE.Color;
 }
 
-export const CATEGORY_COLORS = getCategoryColorsMap('cyberpunk');
-
-export const DEFAULT_COLOR = {
-  hex: AESTHETIC_THEMES.cyberpunk.defaultNodeColor,
-  rgb: new THREE.Color(AESTHETIC_THEMES.cyberpunk.defaultNodeColor),
+/** Paleta neón canónica alineada con los centroides estelares del worker. */
+export const CATEGORY_COLORS: Record<string, CategoryColorEntry> = {
+  Arquitectura: { hex: '#06b6d4', color: new THREE.Color('#06b6d4') },
+  Física: { hex: '#a855f7', color: new THREE.Color('#a855f7') },
+  Protocolo: { hex: '#f97316', color: new THREE.Color('#f97316') },
+  Datos: { hex: '#ec4899', color: new THREE.Color('#ec4899') },
+  Red: { hex: '#10b981', color: new THREE.Color('#10b981') },
+  Memoria: { hex: '#3b82f6', color: new THREE.Color('#3b82f6') },
+  IA: { hex: '#facc15', color: new THREE.Color('#facc15') },
+  Cuántico: { hex: '#00f0ff', color: new THREE.Color('#00f0ff') },
 };
 
-// Función de compatibilidad que devuelve directamente un THREE.Color del tema actual
-export function getNodeColor(category?: string, theme: AestheticTheme = 'cyberpunk'): THREE.Color {
-  const palette = AESTHETIC_THEMES[theme]?.palette || AESTHETIC_THEMES.cyberpunk.palette;
-  const defaultHex = AESTHETIC_THEMES[theme]?.defaultNodeColor || '#06b6d4';
+export const DEFAULT_NODE_HEX = '#06b6d4';
 
-  if (!category || !palette[category]) {
-    return new THREE.Color(defaultHex);
+/** Compatibilidad: mapa { hex, rgb } para consumidores previos. */
+export const CATEGORY_PALETTE: Record<string, string> = Object.fromEntries(
+  Object.entries(CATEGORY_COLORS).map(([key, value]) => [key, value.hex])
+);
+
+export function getNodeColor(category?: string): THREE.Color {
+  if (category && CATEGORY_COLORS[category]) {
+    return CATEGORY_COLORS[category].color.clone();
   }
-
-  return new THREE.Color(palette[category]);
+  return new THREE.Color(DEFAULT_NODE_HEX);
 }
 
-export function getCategoryColorHex(category?: string, theme: AestheticTheme = 'cyberpunk'): string {
-  const palette = AESTHETIC_THEMES[theme]?.palette || AESTHETIC_THEMES.cyberpunk.palette;
-  return (category && palette[category]) ? palette[category] : AESTHETIC_THEMES[theme].defaultNodeColor;
+export function getCategoryColorHex(category?: string): string {
+  if (category && CATEGORY_COLORS[category]) {
+    return CATEGORY_COLORS[category].hex;
+  }
+  return DEFAULT_NODE_HEX;
 }
 
-export function getCategoryColorThree(category?: string, theme: AestheticTheme = 'cyberpunk'): THREE.Color {
-  return getNodeColor(category, theme);
+export function getCategoryColorThree(category?: string): THREE.Color {
+  return getNodeColor(category);
 }
